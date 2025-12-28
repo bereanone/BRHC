@@ -1,0 +1,7 @@
+- ID: BRHC-001
+- Chapter: 127
+- Question: 5
+- Description: Question text bleeds into answer text.
+- Expected: Question text and answer text are clearly separated.
+- Actual: Question text and answer text run together.
+- Severity: Medium

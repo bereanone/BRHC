@@ -2,3 +2,10 @@
 *.log
 *.tmp
 __pycache__/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+build/
+brhc.db-journal
