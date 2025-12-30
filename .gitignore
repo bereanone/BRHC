@@ -9,3 +9,9 @@ __pycache__/
 .pub-cache/
 build/
 brhc.db-journal
+*.db-wal
+*.db-shm
+*.db-journal
+*.db-wal
+*.db-shm
+*.db-journal
