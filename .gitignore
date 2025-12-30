@@ -24,9 +24,9 @@ brhc.db-journal
 audit*.json
 
 # --- Reference documents (source material) ---
-docs/references/
 *.docx
 *.pdf
 
 # --- Editor / temp files ---
 ~$*
+ 
