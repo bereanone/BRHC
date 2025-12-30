@@ -15,3 +15,18 @@ brhc.db-journal
 *.db-wal
 *.db-shm
 *.db-journal
+# --- SQLite runtime files ---
+*.db-wal
+*.db-shm
+*.db-journal
+
+# --- OCR / audit artifacts ---
+audit*.json
+
+# --- Reference documents (source material) ---
+docs/references/
+*.docx
+*.pdf
+
+# --- Editor / temp files ---
+~$*
