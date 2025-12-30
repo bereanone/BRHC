@@ -18,7 +18,7 @@ class ChaptersScreen extends StatelessWidget {
       appBar: AppBar(
         title: Text(sectionTitle),
       ),
-      body: FutureBuilder<List<Chapter>>(
+      body: FutureBuilder<List<ChapterEntry>>(
         future: BrhcDatabase.instance.fetchChapters(sectionTitle),
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
@@ -36,20 +36,20 @@ class ChaptersScreen extends StatelessWidget {
                       24;
               final listItems = List.generate(chapters.length, (index) {
                 final chapter = chapters[index];
-                final displayTitle = chapter.title;
+                final displayTitle = chapter.chapterTitle;
                 return SizedBox(
                   height: tileHeight,
                   child: GestureDetector(
                     onTap: () {
                       Navigator.of(context).push(
                         FadePageRoute<void>(
-                        page: QuestionsScreen(
-                          chapterTitle: chapter.title,
-                          displayTitle: displayTitle,
-                          chapterId: chapter.chapterId,
+                          page: QuestionsScreen(
+                            sectionTitle: chapter.rawSectionTitle,
+                            chapterTitle: chapter.rawChapterTitle,
+                            displayTitle: displayTitle,
+                          ),
                         ),
-                      ),
-                    );
+                      );
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(

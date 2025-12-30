@@ -60,7 +60,8 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/brhc.db
+    - assets/databases/brhc.db
+    - assets/databases/
     - assets/seal.png
     - assets/biblical_heritage_icon.png
     - assets/Images/Logo2.png

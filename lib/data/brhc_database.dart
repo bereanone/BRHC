@@ -13,145 +13,211 @@ class BrhcDatabase {
 
   static final BrhcDatabase instance = BrhcDatabase._();
 
-  Database? _database;
-  Database? _userDatabase;
-  String? _userDatabasePath;
-  bool _auditMarksAvailable = true;
+  Database? _seedDb;
+  Database? _userDb;
+  Future<Database>? _seedOpening;
+  Future<Database>? _userOpening;
+
+  String _normalizeSectionTitleForMatch(String value) {
+    var normalized = _stripTagPrefix(value);
+    normalized =
+        normalized.replaceFirst(RegExp(r'^Section\s+\d+\s*[-.]?\s*'), '');
+    return normalized.trim();
+  }
+
+  String _normalizeChapterTitleForMatch(String value) {
+    return value.replaceFirst(RegExp(r'^\s*\[Ch\]\s*'), '').trim();
+  }
+
+  String _placeholders(int count) {
+    return List.filled(count, '?').join(',');
+  }
+
+  Future<List<String>> _resolveSectionTitles(
+    Database db,
+    String sectionTitle,
+  ) async {
+    final rows = await db.rawQuery(
+      'SELECT DISTINCT section_title FROM doc_blocks WHERE section_title IS NOT NULL',
+    );
+    final matches = rows
+        .map((row) => row['section_title'] as String)
+        .where(
+          (title) => _normalizeSectionTitleForMatch(title) == sectionTitle,
+        )
+        .toList();
+    if (matches.isEmpty) {
+      matches.add(sectionTitle);
+    }
+    return matches;
+  }
+
+  Future<List<String>> _resolveChapterTitles(
+    Database db,
+    List<String> sectionTitles,
+    String chapterTitle,
+  ) async {
+    if (sectionTitles.isEmpty) {
+      return [chapterTitle];
+    }
+    final rows = await db.rawQuery(
+      '''
+      SELECT DISTINCT chapter_title
+      FROM doc_blocks
+      WHERE section_title IN (${_placeholders(sectionTitles.length)})
+        AND chapter_title IS NOT NULL
+      ''',
+      sectionTitles,
+    );
+    final target = _normalizeChapterTitleForMatch(chapterTitle);
+    final matches = rows
+        .map((row) => row['chapter_title'] as String)
+        .where(
+          (title) => _normalizeChapterTitleForMatch(title) == target,
+        )
+        .toList();
+    if (matches.isEmpty) {
+      matches.add(chapterTitle);
+    }
+    return matches;
+  }
+
+  String _stripTagPrefix(String value) {
+    return value.replaceFirst(RegExp(r'^\s*\[[A-Za-z]+\]\s*'), '').trim();
+  }
+
+  String _cleanBlockText(String value) {
+    return value.replaceFirst(RegExp(r'^\s*\[[A-Za-z]+\]\s*'), '').trim();
+  }
 
   Future<Database> get database async {
-    final existing = _database;
+    final existing = _seedDb;
     if (existing != null) {
       return existing;
     }
-    _database = await _openDatabase();
-    return _database!;
-  }
-
-  Future<Database> _openDatabase() async {
-    final databasePath = await getDatabasesPath();
-    final path = join(databasePath, 'brhc.db');
-    final exists = await databaseExists(path);
-
-    // Seed DB is opened read-only to preserve canonical data.
-    if (!exists) {
-      await Directory(dirname(path)).create(recursive: true);
-      final data = await rootBundle.load('assets/brhc.db');
-      final bytes = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
-      await File(path).writeAsBytes(bytes, flush: true);
-    }
-
-    final db = await openDatabase(path, readOnly: true);
-    assert(() {
-      _logSchemaInfo(db);
-      return true;
-    }());
-    return db;
+    _seedOpening ??= _openSeedDb();
+    _seedDb = await _seedOpening!;
+    _seedOpening = null;
+    return _seedDb!;
   }
 
   Future<Database> get userDatabase async {
-    final existing = _userDatabase;
+    final existing = _userDb;
     if (existing != null) {
       return existing;
     }
-    _userDatabase = await _openUserDatabase();
-    return _userDatabase!;
+    _userOpening ??= _openUserDb();
+    _userDb = await _userOpening!;
+    _userOpening = null;
+    return _userDb!;
   }
 
-  Future<Database> _openUserDatabase() async {
-    final databasePath = await getDatabasesPath();
-    final path = join(databasePath, 'brhc_user.db');
-    _userDatabasePath = path;
-    // User DB is opened read/write for sandboxed audit marks.
-    final db = await openDatabase(
+  Future<Database> _openUserDb() async {
+    final dbDir = await getDatabasesPath();
+    await Directory(dbDir).create(recursive: true);
+    final path = join(dbDir, 'brhc_user.db');
+    debugPrint('BRHC user DB path: $path');
+    if (!File(path).existsSync()) {
+      try {
+        final data = await rootBundle.load('assets/databases/brhc_user.db');
+        final bytes =
+            data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+        await File(path).writeAsBytes(bytes, flush: true);
+      } catch (_) {}
+    }
+    return openDatabase(
       path,
       version: 1,
-      onCreate: (db, _) async {
-        await db.execute(
-          '''
-          CREATE TABLE IF NOT EXISTS brhc_audit_marks (
-            question_id INTEGER PRIMARY KEY,
-            checked INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-          )
-          ''',
-        );
-      },
-      onOpen: (db) async {
-        await db.execute(
-          '''
-          CREATE TABLE IF NOT EXISTS brhc_audit_marks (
-            question_id INTEGER PRIMARY KEY,
-            checked INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-          )
-          ''',
-        );
-        final columns =
-            await db.rawQuery("PRAGMA table_info(brhc_audit_marks)");
-        _auditMarksAvailable =
-            columns.any((row) => row['name'] == 'question_id');
-        if (!_auditMarksAvailable) {
-          debugPrint('Audit marks disabled: question_id column missing.');
-        }
-      },
     );
-    return db;
   }
 
-  Future<void> _ensureUserAttached(Database seedDb) async {
-    await userDatabase;
-    if (!_auditMarksAvailable) {
-      return;
+  Future<Database> _openSeedDb() async {
+    // Ensure sandbox is initialized by opening user DB first
+    await _openUserDb();
+
+    final dbDir = await getDatabasesPath();
+    await Directory(dbDir).create(recursive: true);
+    final path = join(dbDir, 'brhc.db');
+
+    final file = File(path);
+    debugPrint('BRHC seed DB path: $path');
+    if (file.existsSync()) {
+      debugPrint('BRHC seed DB exists: true');
+      debugPrint('BRHC seed DB size: ${file.lengthSync()}');
+    } else {
+      debugPrint('BRHC seed DB exists: false');
     }
-    final userPath = _userDatabasePath;
-    if (userPath == null) {
-      return;
+    if (!file.existsSync()) {
+      final data = await rootBundle.load('assets/databases/brhc.db');
+      final bytes =
+          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      await file.writeAsBytes(bytes, flush: true);
     }
-    final attached = await seedDb.rawQuery('PRAGMA database_list');
-    final alreadyAttached = attached.any((row) => row['name'] == 'brhc_user');
-    if (!alreadyAttached) {
-      await seedDb.execute('ATTACH DATABASE ? AS brhc_user', [userPath]);
-    }
+
+    return openDatabase(
+      path,
+      readOnly: true,
+    );
   }
 
   Future<List<Section>> fetchSections() async {
     final db = await database;
     final rows = await db.rawQuery(
-      'SELECT section_title FROM brhc_sections ORDER BY order_index',
+      '''
+      SELECT section_title
+      FROM brhc_sections
+      ORDER BY order_index
+      ''',
     );
     return rows
-        .map<Section>((row) => Section(title: row['section_title'] as String))
+        .map<Section>((row) {
+          final rawTitle = row['section_title'] as String;
+          return Section(
+            title: _stripTagPrefix(rawTitle),
+            rawTitle: rawTitle,
+          );
+        })
         .toList();
   }
 
-  Future<List<Chapter>> fetchChapters(String sectionTitle) async {
+  Future<List<ChapterEntry>> fetchChapters(String sectionTitle) async {
     final db = await database;
     try {
+      final sectionTitles = await _resolveSectionTitles(db, sectionTitle);
+      if (sectionTitles.isEmpty) {
+        return [];
+      }
       final rows = await db.rawQuery(
         '''
         SELECT
-          c.chapter_id,
-          c.chapter_title,
-          MIN(q.question_id) AS first_question_id
-        FROM brhc_chapters c
-        JOIN brhc_sections s ON s.section_id = c.section_id
-        JOIN brhc_questions q ON q.chapter_id = c.chapter_id
-        WHERE s.section_title = ?
-        GROUP BY c.chapter_id, c.chapter_title
-        ORDER BY c.order_index
+          chapter_title,
+          MIN(block_id) AS first_block
+        FROM doc_blocks
+        WHERE section_title IS NOT NULL
+          AND chapter_title IS NOT NULL
+          AND chapter_title <> ''
+          AND section_title IN (${_placeholders(sectionTitles.length)})
+        GROUP BY chapter_title
+        ORDER BY first_block
         ''',
-        [sectionTitle],
+        sectionTitles,
       );
       if (rows.isEmpty) {
         debugPrint('Warning: no chapters found for section "$sectionTitle".');
       }
 
       return rows
-          .map<Chapter>(
-            (row) => Chapter(
-              title: row['chapter_title'] as String,
-              chapterId: row['chapter_id'] as int,
-            ),
+          .map<ChapterEntry>(
+            (row) {
+              final rawChapterTitle = row['chapter_title'] as String;
+              return ChapterEntry(
+                sectionTitle: _stripTagPrefix(sectionTitle),
+                chapterTitle: _stripTagPrefix(rawChapterTitle),
+                rawSectionTitle: sectionTitle,
+                rawChapterTitle: rawChapterTitle,
+                firstBlockId: (row['first_block'] as int?) ?? 0,
+              );
+            },
           )
           .toList();
     } catch (error) {
@@ -160,168 +226,255 @@ class BrhcDatabase {
     }
   }
 
-  Future<List<QuestionItem>> fetchQuestions({
-    required int chapterId,
+  Future<List<DocBlock>> fetchChapterBlocks({
+    required String sectionTitle,
+    required String chapterTitle,
   }) async {
     final db = await database;
     try {
-      await _ensureUserAttached(db);
-      final includeMarks = _auditMarksAvailable;
+      final sectionTitles = await _resolveSectionTitles(db, sectionTitle);
+      final chapterTitles =
+          await _resolveChapterTitles(db, sectionTitles, chapterTitle);
+      if (sectionTitles.isEmpty || chapterTitles.isEmpty) {
+        return [];
+      }
+      final minRow = await db.rawQuery(
+        '''
+        SELECT MIN(block_id) AS first_block
+        FROM doc_blocks
+        WHERE section_title IN (${_placeholders(sectionTitles.length)})
+        ''',
+        sectionTitles,
+      );
+      final minBlock = (minRow.first['first_block'] as int?) ?? 0;
       final rows = await db.rawQuery(
-        includeMarks
-            ? '''
-            SELECT
-              q.question_id,
-              q.question_text,
-              q.order_index,
-              COALESCE(GROUP_CONCAT(a.answer_text, ' '), '') AS answer_text,
-              i.image_blob,
-              COALESCE(m.checked, 0) AS checked
-            FROM brhc_questions q
-            JOIN brhc_chapters c
-              ON c.chapter_id = q.chapter_id
-            LEFT JOIN brhc_answers a
-              ON a.question_id = q.question_id
-            LEFT JOIN brhc_images i
-              ON i.chapter_number = c.order_index
-             AND i.question_number = q.order_index
-            LEFT JOIN brhc_user.brhc_audit_marks m
-              ON m.question_id = q.question_id
-            WHERE q.chapter_id = ?
-            GROUP BY q.question_id, q.question_text, q.order_index, i.image_blob, m.checked
-            ORDER BY q.order_index, q.question_id
-            '''
-            : '''
-            SELECT
-              q.question_id,
-              q.question_text,
-              q.order_index,
-              COALESCE(GROUP_CONCAT(a.answer_text, ' '), '') AS answer_text,
-              i.image_blob,
-              0 AS checked
-            FROM brhc_questions q
-            JOIN brhc_chapters c
-              ON c.chapter_id = q.chapter_id
-            LEFT JOIN brhc_answers a
-              ON a.question_id = q.question_id
-            LEFT JOIN brhc_images i
-              ON i.chapter_number = c.order_index
-             AND i.question_number = q.order_index
-            WHERE q.chapter_id = ?
-            GROUP BY q.question_id, q.question_text, q.order_index, i.image_blob
-            ORDER BY q.order_index, q.question_id
-            ''',
-        [chapterId],
+        '''
+        SELECT
+          block_id,
+          block_type,
+          raw_text,
+          normalized_text,
+          table_json
+        FROM doc_blocks
+        WHERE section_title IS NOT NULL
+          AND chapter_title IS NOT NULL
+          AND section_title IN (${_placeholders(sectionTitles.length)})
+          AND chapter_title IN (${_placeholders(chapterTitles.length)})
+          AND block_id >= ?
+        ORDER BY block_id
+        ''',
+        [
+          ...sectionTitles,
+          ...chapterTitles,
+          minBlock,
+        ],
       );
 
-      return rows.map((row) {
-        final blob = row['image_blob'] as Uint8List?;
-        return QuestionItem(
-          questionId: row['question_id'] as int,
-          question: row['question_text'] as String,
-          answer: row['answer_text'] as String,
-          answerType: null,
-          verseText: null,
-          imageBytes: blob,
-          checked: (row['checked'] as int?) == 1,
-        );
-      }).toList();
+      final blockIds = rows
+          .map<int>((row) => row['block_id'] as int)
+          .toList(growable: false);
+      final imageMap = await _loadImagesForBlocks(db, blockIds);
+
+      return rows
+          .map<DocBlock>(
+            (row) => DocBlock(
+              blockId: row['block_id'] as int,
+              blockType: row['block_type'] as String? ?? 'text',
+              rawText: _cleanBlockText(row['raw_text'] as String? ?? ''),
+              normalizedText:
+                  _cleanBlockText(row['normalized_text'] as String? ?? ''),
+              tableJson: row['table_json'] as String?,
+              imageBlobs: imageMap[row['block_id'] as int] ?? const [],
+            ),
+          )
+          .toList();
     } catch (error) {
-      debugPrint('SQL error in fetchQuestions: $error');
+      debugPrint('SQL error in fetchChapterBlocks: $error');
       rethrow;
     }
   }
 
-  Future<Chapter?> fetchPreviousChapter(int chapterId) async {
-    final db = await database;
-    final rows = await db.rawQuery(
-      '''
-      SELECT c.chapter_id, c.chapter_title
-      FROM brhc_chapters c
-      WHERE c.order_index < (
-        SELECT order_index FROM brhc_chapters WHERE chapter_id = ?
-      )
-        AND EXISTS (
-          SELECT 1 FROM brhc_questions q WHERE q.chapter_id = c.chapter_id
-        )
-      ORDER BY c.order_index DESC
-      LIMIT 1
-      ''',
-      [chapterId],
-    );
-    if (rows.isEmpty) {
-      return null;
-    }
-    final row = rows.first;
-    return Chapter(
-      title: row['chapter_title'] as String,
-      chapterId: row['chapter_id'] as int,
-    );
-  }
-
-  Future<Chapter?> fetchNextChapter(int chapterId) async {
-    final db = await database;
-    final rows = await db.rawQuery(
-      '''
-      SELECT c.chapter_id, c.chapter_title
-      FROM brhc_chapters c
-      WHERE c.order_index > (
-        SELECT order_index FROM brhc_chapters WHERE chapter_id = ?
-      )
-        AND EXISTS (
-          SELECT 1 FROM brhc_questions q WHERE q.chapter_id = c.chapter_id
-        )
-      ORDER BY c.order_index ASC
-      LIMIT 1
-      ''',
-      [chapterId],
-    );
-    if (rows.isEmpty) {
-      return null;
-    }
-    final row = rows.first;
-    return Chapter(
-      title: row['chapter_title'] as String,
-      chapterId: row['chapter_id'] as int,
-    );
-  }
-
-  Future<void> setAuditMark({
-    required int questionId,
-    required bool checked,
+  Future<List<QuestionNavItem>> fetchQuestionIndex({
+    required String sectionTitle,
+    required String chapterTitle,
   }) async {
-    if (!_auditMarksAvailable) {
-      debugPrint('Audit marks disabled: question_id column missing.');
-      return;
+    final db = await database;
+    final sectionTitles = await _resolveSectionTitles(db, sectionTitle);
+    final chapterTitles =
+        await _resolveChapterTitles(db, sectionTitles, chapterTitle);
+    if (sectionTitles.isEmpty || chapterTitles.isEmpty) {
+      return [];
     }
-    final db = await userDatabase;
-    if (checked) {
-      await db.rawInsert(
-        '''
-        INSERT OR REPLACE INTO brhc_audit_marks
-          (question_id, checked, updated_at)
-        VALUES (?, 1, CURRENT_TIMESTAMP)
-        ''',
-        [questionId],
-      );
-    } else {
-      await db.rawUpdate(
-        '''
-        UPDATE brhc_audit_marks
-        SET checked = 0, updated_at = CURRENT_TIMESTAMP
-        WHERE question_id = ?
-        ''',
-        [questionId],
-      );
-    }
+    final rows = await db.rawQuery(
+      '''
+      SELECT block_id, question_number, question_text
+      FROM d_questions
+      WHERE section_title IN (${_placeholders(sectionTitles.length)})
+        AND chapter_title IN (${_placeholders(chapterTitles.length)})
+      ORDER BY question_number
+      ''',
+      [
+        ...sectionTitles,
+        ...chapterTitles,
+      ],
+    );
+
+    return rows
+        .map<QuestionNavItem>(
+          (row) => QuestionNavItem(
+            blockId: row['block_id'] as int,
+            questionNumber: row['question_number'] as int? ?? 0,
+            questionText: _cleanBlockText(row['question_text'] as String? ?? ''),
+          ),
+        )
+        .toList();
   }
 
-  Future<void> _logSchemaInfo(Database db) async {
-    final dbPath = await getDatabasesPath();
-    debugPrint('BRHC DB path: $dbPath/brhc.db');
-    final questions = await db.rawQuery('PRAGMA table_info(brhc_questions)');
-    final chapters = await db.rawQuery('PRAGMA table_info(brhc_chapters)');
-    debugPrint('brhc_questions schema: $questions');
-    debugPrint('brhc_chapters schema: $chapters');
+  Future<ChapterEntry?> fetchPreviousChapter({
+    required String sectionTitle,
+    required String chapterTitle,
+  }) async {
+    final db = await database;
+    final sectionTitles = await _resolveSectionTitles(db, sectionTitle);
+    final chapterTitles =
+        await _resolveChapterTitles(db, sectionTitles, chapterTitle);
+    if (sectionTitles.isEmpty || chapterTitles.isEmpty) {
+      return null;
+    }
+    final currentRows = await db.rawQuery(
+      '''
+      SELECT MIN(block_id) AS first_block
+      FROM doc_blocks
+      WHERE section_title IS NOT NULL
+        AND chapter_title IS NOT NULL
+        AND section_title IN (${_placeholders(sectionTitles.length)})
+        AND chapter_title IN (${_placeholders(chapterTitles.length)})
+      ''',
+      [
+        ...sectionTitles,
+        ...chapterTitles,
+      ],
+    );
+    final currentFirst = (currentRows.first['first_block'] as int?) ?? 0;
+    if (currentFirst == 0) {
+      return null;
+    }
+
+    final rows = await db.rawQuery(
+      '''
+      WITH chapters AS (
+        SELECT section_title, chapter_title, MIN(block_id) AS first_block
+        FROM doc_blocks
+        WHERE section_title IS NOT NULL AND chapter_title IS NOT NULL
+        GROUP BY section_title, chapter_title
+      )
+      SELECT section_title, chapter_title, first_block
+      FROM chapters
+      WHERE first_block < ?
+      ORDER BY first_block DESC
+      LIMIT 1
+      ''',
+      [currentFirst],
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    final row = rows.first;
+    return ChapterEntry(
+      sectionTitle: _stripTagPrefix(row['section_title'] as String),
+      chapterTitle: _stripTagPrefix(row['chapter_title'] as String),
+      rawSectionTitle: row['section_title'] as String,
+      rawChapterTitle: row['chapter_title'] as String,
+      firstBlockId: row['first_block'] as int,
+    );
+  }
+
+  Future<ChapterEntry?> fetchNextChapter({
+    required String sectionTitle,
+    required String chapterTitle,
+  }) async {
+    final db = await database;
+    final sectionTitles = await _resolveSectionTitles(db, sectionTitle);
+    final chapterTitles =
+        await _resolveChapterTitles(db, sectionTitles, chapterTitle);
+    if (sectionTitles.isEmpty || chapterTitles.isEmpty) {
+      return null;
+    }
+    final currentRows = await db.rawQuery(
+      '''
+      SELECT MIN(block_id) AS first_block
+      FROM doc_blocks
+      WHERE section_title IS NOT NULL
+        AND chapter_title IS NOT NULL
+        AND section_title IN (${_placeholders(sectionTitles.length)})
+        AND chapter_title IN (${_placeholders(chapterTitles.length)})
+      ''',
+      [
+        ...sectionTitles,
+        ...chapterTitles,
+      ],
+    );
+    final currentFirst = (currentRows.first['first_block'] as int?) ?? 0;
+    if (currentFirst == 0) {
+      return null;
+    }
+
+    final rows = await db.rawQuery(
+      '''
+      WITH chapters AS (
+        SELECT section_title, chapter_title, MIN(block_id) AS first_block
+        FROM doc_blocks
+        WHERE section_title IS NOT NULL AND chapter_title IS NOT NULL
+        GROUP BY section_title, chapter_title
+      )
+      SELECT section_title, chapter_title, first_block
+      FROM chapters
+      WHERE first_block > ?
+      ORDER BY first_block ASC
+      LIMIT 1
+      ''',
+      [currentFirst],
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    final row = rows.first;
+    return ChapterEntry(
+      sectionTitle: _stripTagPrefix(row['section_title'] as String),
+      chapterTitle: _stripTagPrefix(row['chapter_title'] as String),
+      rawSectionTitle: row['section_title'] as String,
+      rawChapterTitle: row['chapter_title'] as String,
+      firstBlockId: row['first_block'] as int,
+    );
+  }
+
+  Future<Map<int, List<Uint8List>>> _loadImagesForBlocks(
+    Database db,
+    List<int> blockIds,
+  ) async {
+    if (blockIds.isEmpty) {
+      return {};
+    }
+    final placeholders = List.filled(blockIds.length, '?').join(',');
+    final rows = await db.rawQuery(
+      '''
+      SELECT m.block_id, i.image_blob
+      FROM brhc_image_block_map m
+      JOIN brhc_images i ON i.image_id = m.image_id
+      WHERE m.block_id IN ($placeholders)
+      ORDER BY m.block_id, m.image_id
+      ''',
+      blockIds,
+    );
+    final imageMap = <int, List<Uint8List>>{};
+    for (final row in rows) {
+      final blockId = row['block_id'] as int;
+      final blob = row['image_blob'] as Uint8List?;
+      if (blob == null) {
+        continue;
+      }
+      imageMap.putIfAbsent(blockId, () => []).add(blob);
+    }
+    return imageMap;
   }
 }

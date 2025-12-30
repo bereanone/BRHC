@@ -2,38 +2,56 @@ import 'dart:typed_data';
 
 class Section {
   final String title;
+  final String rawTitle;
 
-  const Section({required this.title});
-}
-
-class Chapter {
-  final String title;
-  final int chapterId;
-
-  const Chapter({
+  const Section({
     required this.title,
-    required this.chapterId,
+    required this.rawTitle,
   });
 }
 
-class QuestionItem {
-  final int questionId;
-  final String question;
-  final String answer;
-  final String? answerType;
-  final String? verseText;
-  final Uint8List? imageBytes;
-  final bool checked;
+class ChapterEntry {
+  final String sectionTitle;
+  final String chapterTitle;
+  final String rawSectionTitle;
+  final String rawChapterTitle;
+  final int firstBlockId;
 
-  const QuestionItem({
-    required this.questionId,
-    required this.question,
-    required this.answer,
-    required this.answerType,
-    required this.verseText,
-    required this.imageBytes,
-    required this.checked,
+  const ChapterEntry({
+    required this.sectionTitle,
+    required this.chapterTitle,
+    required this.rawSectionTitle,
+    required this.rawChapterTitle,
+    required this.firstBlockId,
   });
+}
 
-  bool get isScripture => answerType == 'scripture';
+class DocBlock {
+  final int blockId;
+  final String blockType;
+  final String rawText;
+  final String normalizedText;
+  final String? tableJson;
+  final List<Uint8List> imageBlobs;
+
+  const DocBlock({
+    required this.blockId,
+    required this.blockType,
+    required this.rawText,
+    required this.normalizedText,
+    required this.tableJson,
+    required this.imageBlobs,
+  });
+}
+
+class QuestionNavItem {
+  final int blockId;
+  final int questionNumber;
+  final String questionText;
+
+  const QuestionNavItem({
+    required this.blockId,
+    required this.questionNumber,
+    required this.questionText,
+  });
 }

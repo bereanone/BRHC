@@ -15,6 +15,13 @@ class SectionsScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Home',
+          onPressed: () {
+            Navigator.of(context).pop();
+          },
+        ),
         title: const Text('Sections'),
         actions: [
           TextButton(
@@ -40,6 +47,14 @@ class SectionsScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
           final sections = snapshot.data ?? [];
+          if (sections.isEmpty) {
+            return const Center(
+              child: Text(
+                'No sections found.\n(Database not loaded)',
+                textAlign: TextAlign.center,
+              ),
+            );
+          }
           return LayoutBuilder(
             builder: (context, constraints) {
               const tileHeight = 52.0;
@@ -58,7 +73,7 @@ class SectionsScreen extends StatelessWidget {
                     onTap: () {
                       Navigator.of(context).push(
                         FadePageRoute<void>(
-                          page: ChaptersScreen(sectionTitle: section.title),
+                          page: ChaptersScreen(sectionTitle: section.rawTitle),
                         ),
                       );
                     },
