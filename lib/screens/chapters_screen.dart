@@ -79,15 +79,29 @@ class ChaptersScreen extends StatelessWidget {
             itemBuilder: (context, index) {
               if (index == 0) {
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: Text(
-                    displaySectionTitle,
-                    textAlign: TextAlign.left,
-                    softWrap: true,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: theme.colorScheme.onSurface.withOpacity(0.7),
-                      letterSpacing: 0.2,
-                    ),
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        displaySectionTitle,
+                        textAlign: TextAlign.left,
+                        softWrap: true,
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Chapters',
+                        textAlign: TextAlign.left,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.7),
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ],
                   ),
                 );
               }

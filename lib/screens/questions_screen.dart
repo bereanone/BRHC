@@ -77,7 +77,7 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(_buildChapterHeader(widget.rawChapterTitle))),
+      appBar: AppBar(title: const Text('')),
       body: FutureBuilder<_ChapterScreenData>(
         future: _dataFuture,
         builder: (context, snapshot) {

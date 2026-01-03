@@ -26,6 +26,7 @@ class SectionsScreen extends StatelessWidget {
             if (navigator.canPop()) {
               navigator.pop();
             } else {
+              // Sections can be the root; replace with entry screen to avoid empty stack.
               navigator.pushReplacement(
                 FadePageRoute<void>(page: const LaunchScreen()),
               );
@@ -129,8 +130,9 @@ class _SectionButton extends StatelessWidget {
           title,
           textAlign: TextAlign.left,
           softWrap: true,
-          style: theme.textTheme.titleMedium?.copyWith(
-            letterSpacing: 0.4,
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.2,
           ),
         ),
       ),
