@@ -130,8 +130,8 @@ class _SectionButton extends StatelessWidget {
           title,
           textAlign: TextAlign.left,
           softWrap: true,
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w700,
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w400,
             letterSpacing: 0.2,
           ),
         ),

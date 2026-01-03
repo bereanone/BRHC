@@ -396,7 +396,9 @@ class BrhcDatabase {
       WITH chapters AS (
         SELECT section_title, chapter_title, MIN(block_id) AS first_block
         FROM doc_blocks
-        WHERE section_title IS NOT NULL AND chapter_title IS NOT NULL
+        WHERE section_title IS NOT NULL
+          AND chapter_title IS NOT NULL
+          AND section_title IN (${_placeholders(sectionTitles.length)})
         GROUP BY section_title, chapter_title
       )
       SELECT section_title, chapter_title, first_block
@@ -405,7 +407,10 @@ class BrhcDatabase {
       ORDER BY first_block DESC
       LIMIT 1
       ''',
-      [currentFirst],
+      [
+        ...sectionTitles,
+        currentFirst,
+      ],
     );
     if (rows.isEmpty) {
       return null;
@@ -455,7 +460,9 @@ class BrhcDatabase {
       WITH chapters AS (
         SELECT section_title, chapter_title, MIN(block_id) AS first_block
         FROM doc_blocks
-        WHERE section_title IS NOT NULL AND chapter_title IS NOT NULL
+        WHERE section_title IS NOT NULL
+          AND chapter_title IS NOT NULL
+          AND section_title IN (${_placeholders(sectionTitles.length)})
         GROUP BY section_title, chapter_title
       )
       SELECT section_title, chapter_title, first_block
@@ -464,7 +471,10 @@ class BrhcDatabase {
       ORDER BY first_block ASC
       LIMIT 1
       ''',
-      [currentFirst],
+      [
+        ...sectionTitles,
+        currentFirst,
+      ],
     );
     if (rows.isEmpty) {
       return null;

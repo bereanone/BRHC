@@ -317,6 +317,7 @@ class _QuestionBlock extends StatelessWidget {
           style: baseStyle?.copyWith(
             fontWeight: FontWeight.w700,
             height: 1.4,
+            color: const Color(0xFF0000FF),
             fontSize: fontSize,
           ),
         ),
@@ -565,43 +566,52 @@ class _QuestionNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return SizedBox(
-      height: 44,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        scrollDirection: Axis.horizontal,
-        itemCount: questions.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 6),
-        itemBuilder: (context, index) {
-          final item = questions[index];
-          final isActive = item.blockId == activeBlockId;
-          return TextButton(
-            onPressed: () => onJump(item.blockId),
-            style: TextButton.styleFrom(
-              fixedSize: const Size(40, 36),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              backgroundColor: isActive
-                  ? theme.colorScheme.primary.withOpacity(0.12)
-                  : theme.colorScheme.surface,
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-              visualDensity: VisualDensity.compact,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-                side: BorderSide(
-                  color: theme.colorScheme.primary.withOpacity(
-                    isActive ? 0.5 : 0.35,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final buttonWidth = constraints.maxWidth < 360 ? 34.0 : 38.0;
+          final buttonHeight = 34.0;
+          return Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final item in questions)
+                SizedBox(
+                  width: buttonWidth,
+                  height: buttonHeight,
+                  child: TextButton(
+                    onPressed: () => onJump(item.blockId),
+                    style: TextButton.styleFrom(
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      backgroundColor: item.blockId == activeBlockId
+                          ? theme.colorScheme.primary.withOpacity(0.12)
+                          : theme.colorScheme.surface,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 4,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        side: BorderSide(
+                          color: theme.colorScheme.primary.withOpacity(
+                            item.blockId == activeBlockId ? 0.5 : 0.35,
+                          ),
+                        ),
+                      ),
+                    ),
+                    child: Text(
+                      '${item.questionNumber}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            child: Text(
-              '${item.questionNumber}',
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.2,
-              ),
-            ),
+            ],
           );
         },
       ),

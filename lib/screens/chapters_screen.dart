@@ -87,17 +87,8 @@ class ChaptersScreen extends StatelessWidget {
                         displaySectionTitle,
                         textAlign: TextAlign.left,
                         softWrap: true,
-                        style: theme.textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.2,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Chapters',
-                        textAlign: TextAlign.left,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.7),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
                           letterSpacing: 0.2,
                         ),
                       ),
