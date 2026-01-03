@@ -2,11 +2,11 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../models/brhc_models.dart';
+import '../startup/startup_data_verification.dart';
 
 class BrhcDatabase {
   BrhcDatabase._();
@@ -87,7 +87,7 @@ class BrhcDatabase {
   }
 
   String _cleanBlockText(String value) {
-    return value.replaceFirst(RegExp(r'^\s*\[[A-Za-z]+\]\s*'), '').trim();
+    return value.replaceFirst(RegExp(r'^\s*\[[A-Za-z]+\]\s*'), '');
   }
 
   Future<Database> get database async {
@@ -112,18 +112,24 @@ class BrhcDatabase {
     return _userDb!;
   }
 
+  Future<Directory> _resolveDbDirectory() async {
+    final dbDir = await resolveStartupSandboxDirectory();
+    debugPrint('BRHC DB directory: ${dbDir.path}');
+    return dbDir;
+  }
+
   Future<Database> _openUserDb() async {
-    final dbDir = await getDatabasesPath();
-    await Directory(dbDir).create(recursive: true);
-    final path = join(dbDir, 'brhc_user.db');
+    final dbDir = await _resolveDbDirectory();
+    final path = join(dbDir.path, 'brhc_user.db');
     debugPrint('BRHC user DB path: $path');
-    if (!File(path).existsSync()) {
-      try {
-        final data = await rootBundle.load('assets/databases/brhc_user.db');
-        final bytes =
-            data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
-        await File(path).writeAsBytes(bytes, flush: true);
-      } catch (_) {}
+    final file = File(path);
+    if (!await file.exists()) {
+      throw StateError('BRHC user DB missing: $path');
+    }
+    final size = await file.length();
+    debugPrint('BRHC user DB size: $size');
+    if (size == 0) {
+      throw StateError('BRHC user DB empty: $path');
     }
     return openDatabase(
       path,
@@ -132,26 +138,20 @@ class BrhcDatabase {
   }
 
   Future<Database> _openSeedDb() async {
-    // Ensure sandbox is initialized by opening user DB first
-    await _openUserDb();
+    await userDatabase;
 
-    final dbDir = await getDatabasesPath();
-    await Directory(dbDir).create(recursive: true);
-    final path = join(dbDir, 'brhc.db');
+    final dbDir = await _resolveDbDirectory();
+    final path = join(dbDir.path, 'brhc.db');
 
     final file = File(path);
     debugPrint('BRHC seed DB path: $path');
-    if (file.existsSync()) {
-      debugPrint('BRHC seed DB exists: true');
-      debugPrint('BRHC seed DB size: ${file.lengthSync()}');
-    } else {
-      debugPrint('BRHC seed DB exists: false');
+    if (!await file.exists()) {
+      throw StateError('BRHC seed DB missing: $path');
     }
-    if (!file.existsSync()) {
-      final data = await rootBundle.load('assets/databases/brhc.db');
-      final bytes =
-          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
-      await file.writeAsBytes(bytes, flush: true);
+    final size = await file.length();
+    debugPrint('BRHC seed DB size: $size');
+    if (size == 0) {
+      throw StateError('BRHC seed DB empty: $path');
     }
 
     return openDatabase(
@@ -325,6 +325,37 @@ class BrhcDatabase {
             blockId: row['block_id'] as int,
             questionNumber: row['question_number'] as int? ?? 0,
             questionText: _cleanBlockText(row['question_text'] as String? ?? ''),
+          ),
+        )
+        .toList();
+  }
+
+  Future<List<DocBlock>> fetchIntroductionBlocks() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT
+        block_id,
+        block_type,
+        raw_text,
+        normalized_text,
+        table_json
+      FROM doc_blocks
+      WHERE block_type IN ('intro_heading', 'intro_paragraph', 'introduction')
+      ORDER BY block_id
+      ''',
+    );
+    debugPrint('Intro blocks found: ${rows.length}');
+
+    return rows
+        .map<DocBlock>(
+          (row) => DocBlock(
+            blockId: row['block_id'] as int,
+            blockType: row['block_type'] as String? ?? 'text',
+            rawText: _cleanBlockText(row['raw_text'] as String? ?? ''),
+            normalizedText: _cleanBlockText(row['normalized_text'] as String? ?? ''),
+            tableJson: row['table_json'] as String?,
+            imageBlobs: const [],
           ),
         )
         .toList();

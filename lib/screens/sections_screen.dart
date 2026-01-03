@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../data/brhc_database.dart';
 import '../models/brhc_models.dart';
+import '../utils/title_formatter.dart';
 import '../widgets/fade_route.dart';
 import 'about_screen.dart';
 import 'chapters_screen.dart';
+import 'introduction_screen.dart';
 
 class SectionsScreen extends StatelessWidget {
   const SectionsScreen({super.key});
@@ -55,59 +57,44 @@ class SectionsScreen extends StatelessWidget {
               ),
             );
           }
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              const tileHeight = 52.0;
-              const spacing = 8.0;
-              final contentHeight = sections.isEmpty
-                  ? 0.0
-                  : (sections.length * tileHeight) +
-                      ((sections.length - 1) * spacing) +
-                      24;
-              final listItems = List.generate(sections.length, (index) {
-                final section = sections[index];
-                return SizedBox(
-                  height: tileHeight,
-                  child: _SectionButton(
-                    title: section.title,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        FadePageRoute<void>(
-                          page: ChaptersScreen(sectionTitle: section.rawTitle),
-                        ),
-                      );
-                    },
-                  ),
+          final listItems = <Widget>[
+            _SectionButton(
+              title: 'Introduction',
+              onTap: () {
+                Navigator.of(context).push(
+                  FadePageRoute<void>(page: const IntroductionScreen()),
                 );
-              });
+              },
+            ),
+            for (var i = 0; i < sections.length; i++)
+              _SectionButton(
+                title: _displaySectionTitle(sections[i], i + 1),
+                onTap: () {
+                  Navigator.of(context).push(
+                    FadePageRoute<void>(
+                      page: ChaptersScreen(sectionTitle: sections[i].rawTitle),
+                    ),
+                  );
+                },
+              ),
+          ];
 
-              if (contentHeight <= constraints.maxHeight) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      for (var i = 0; i < listItems.length; i++) ...[
-                        listItems[i],
-                        if (i != listItems.length - 1)
-                          const SizedBox(height: spacing),
-                      ],
-                    ],
-                  ),
-                );
-              }
-
-              return ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                itemCount: sections.length,
-                separatorBuilder: (_, __) => const SizedBox(height: spacing),
-                itemBuilder: (context, index) => listItems[index],
-              );
-            },
+          return ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            itemCount: listItems.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 6),
+            itemBuilder: (context, index) => listItems[index],
           );
         },
       ),
     );
+  }
+
+  String _displaySectionTitle(Section section, int fallbackIndex) {
+    final parsed = TitleFormatter.parseSectionTitle(section.rawTitle);
+    final number = parsed.number ?? fallbackIndex.toString();
+    final title = parsed.title.isEmpty ? section.title : parsed.title;
+    return '$number. $title';
   }
 }
 
@@ -124,7 +111,7 @@ class _SectionButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           border: Border.all(color: theme.colorScheme.primary.withOpacity(0.6)),
           borderRadius: BorderRadius.circular(6),
@@ -132,7 +119,8 @@ class _SectionButton extends StatelessWidget {
         ),
         child: Text(
           title,
-          textAlign: TextAlign.center,
+          textAlign: TextAlign.left,
+          softWrap: true,
           style: theme.textTheme.titleMedium?.copyWith(
             letterSpacing: 0.4,
           ),

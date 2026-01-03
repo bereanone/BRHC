@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../data/brhc_database.dart';
 import '../models/brhc_models.dart';
+import '../utils/title_formatter.dart';
 import '../widgets/fade_route.dart';
 import 'questions_screen.dart';
 
@@ -16,7 +17,7 @@ class ChaptersScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(sectionTitle),
+        title: const Text('Chapters'),
       ),
       body: FutureBuilder<List<ChapterEntry>>(
         future: BrhcDatabase.instance.fetchChapters(sectionTitle),
@@ -25,82 +26,77 @@ class ChaptersScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
           final chapters = snapshot.data ?? [];
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              const tileHeight = 54.0;
-              const spacing = 8.0;
-              final contentHeight = chapters.isEmpty
-                  ? 0.0
-                  : (chapters.length * tileHeight) +
-                      ((chapters.length - 1) * spacing) +
-                      24;
-              final listItems = List.generate(chapters.length, (index) {
-                final chapter = chapters[index];
-                final displayTitle = chapter.chapterTitle;
-                return SizedBox(
-                  height: tileHeight,
-                  child: GestureDetector(
-                    onTap: () {
-                      Navigator.of(context).push(
-                        FadePageRoute<void>(
-                          page: QuestionsScreen(
-                            sectionTitle: chapter.rawSectionTitle,
-                            chapterTitle: chapter.rawChapterTitle,
-                            displayTitle: displayTitle,
-                          ),
-                        ),
-                      );
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: theme.colorScheme.primary.withOpacity(0.6),
-                        ),
-                        borderRadius: BorderRadius.circular(6),
-                        color: theme.colorScheme.surface,
-                      ),
-                      child: Text(
-                        displayTitle,
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          letterSpacing: 0.2,
-                        ),
-                      ),
+          final displaySectionTitle =
+              TitleFormatter.parseSectionTitle(sectionTitle).title;
+          final listItems = List.generate(chapters.length, (index) {
+            final chapter = chapters[index];
+            final parsed = TitleFormatter.parseChapterTitle(chapter.rawChapterTitle);
+            final number = parsed.number ?? '${index + 1}';
+            final title = parsed.title;
+            final displayTitle = '$number. $title';
+            return GestureDetector(
+              onTap: () {
+                Navigator.of(context).push(
+                  FadePageRoute<void>(
+                    page: QuestionsScreen(
+                      sectionTitle: chapter.rawSectionTitle,
+                      chapterTitle: chapter.rawChapterTitle,
+                      displayTitle: displayTitle,
+                      rawChapterTitle: chapter.rawChapterTitle,
+                      displaySectionTitle: displaySectionTitle,
                     ),
                   ),
                 );
-              });
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: theme.colorScheme.primary.withOpacity(0.6),
+                  ),
+                  borderRadius: BorderRadius.circular(6),
+                  color: theme.colorScheme.surface,
+                ),
+                child: Text(
+                  displayTitle,
+                  textAlign: TextAlign.left,
+                  softWrap: true,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+            );
+          });
 
-              if (contentHeight <= constraints.maxHeight) {
+          return ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            itemCount: listItems.length + 1,
+            separatorBuilder: (_, __) => const SizedBox(height: 6),
+            itemBuilder: (context, index) {
+              if (index == 0) {
                 return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      for (var i = 0; i < listItems.length; i++) ...[
-                        listItems[i],
-                        if (i != listItems.length - 1)
-                          const SizedBox(height: spacing),
-                      ],
-                    ],
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Text(
+                    displaySectionTitle,
+                    textAlign: TextAlign.left,
+                    softWrap: true,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.7),
+                      letterSpacing: 0.2,
+                    ),
                   ),
                 );
               }
-
-              return ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                itemCount: chapters.length,
-                separatorBuilder: (_, __) => const SizedBox(height: spacing),
-                itemBuilder: (context, index) => listItems[index],
-              );
+              return listItems[index - 1];
             },
           );
         },
       ),
     );
   }
+
 }

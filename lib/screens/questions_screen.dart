@@ -6,11 +6,14 @@ import 'package:flutter/rendering.dart';
 
 import '../data/brhc_database.dart';
 import '../models/brhc_models.dart';
+import '../utils/title_formatter.dart';
 
 class QuestionsScreen extends StatefulWidget {
   final String sectionTitle;
   final String chapterTitle;
   final String displayTitle;
+  final String rawChapterTitle;
+  final String displaySectionTitle;
   final int? initialBlockId;
 
   const QuestionsScreen({
@@ -18,6 +21,8 @@ class QuestionsScreen extends StatefulWidget {
     required this.sectionTitle,
     required this.chapterTitle,
     required this.displayTitle,
+    required this.rawChapterTitle,
+    required this.displaySectionTitle,
     this.initialBlockId,
   });
 
@@ -28,6 +33,8 @@ class QuestionsScreen extends StatefulWidget {
 class _QuestionsScreenState extends State<QuestionsScreen> {
   final ScrollController _scrollController = ScrollController();
   final Map<int, GlobalKey> _blockKeys = {};
+  final Set<int> _questionBlockIds = {};
+  int? _activeBlockId;
 
   late final Future<_ChapterScreenData> _dataFuture = _loadData();
 
@@ -63,13 +70,14 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
   @override
   void initState() {
     super.initState();
+    _activeBlockId = widget.initialBlockId;
     _scrollController.addListener(_handleScroll);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.displayTitle)),
+      appBar: AppBar(title: Text(_buildChapterHeader(widget.rawChapterTitle))),
       body: FutureBuilder<_ChapterScreenData>(
         future: _dataFuture,
         builder: (context, snapshot) {
@@ -84,6 +92,13 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
           final questionMap = {
             for (final q in questions) q.blockId: q,
           };
+          _questionBlockIds
+            ..clear()
+            ..addAll(questionMap.keys);
+          _blockKeys.clear();
+          final headerTitle = _buildChapterHeader(widget.rawChapterTitle);
+          final activeBlockId = _activeBlockId ??
+              (questions.isNotEmpty ? questions.first.blockId : null);
 
           WidgetsBinding.instance.addPostFrameCallback((_) {
             final target = widget.initialBlockId;
@@ -94,8 +109,13 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
 
           return Column(
             children: [
+              _ChapterHeader(
+                sectionTitle: TitleFormatter.parseSectionTitle(
+                  widget.displaySectionTitle,
+                ).title,
+                chapterTitle: headerTitle,
+              ),
               _ChapterNavRow(
-                title: widget.displayTitle,
                 onPrevious: previousChapter == null
                     ? null
                     : () => _navigateToChapter(previousChapter),
@@ -105,6 +125,7 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                 _QuestionNavBar(
                   questions: questions,
                   onJump: _scrollToBlock,
+                  activeBlockId: activeBlockId,
                 ),
               Expanded(
                 child: NotificationListener<UserScrollNotification>(
@@ -114,26 +135,15 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                     }
                     return false;
                   },
-                  child: ListView.separated(
+                  child: ListView(
                     controller: _scrollController,
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                    itemCount: blocks.length,
-                    separatorBuilder: (_, __) => const Divider(height: 24),
-                    itemBuilder: (context, index) {
-                      final block = blocks[index];
-                      final key = _blockKeys.putIfAbsent(
-                        block.blockId,
-                        () => GlobalKey(),
-                      );
-                      final question = questionMap[block.blockId];
-                      return Container(
-                        key: key,
-                        child: _BlockRenderer(
-                          block: block,
-                          question: question,
-                        ),
-                      );
-                    },
+                    children: [
+                      for (var i = 0; i < blocks.length; i++) ...[
+                        _buildRenderItem(blocks[i], questionMap),
+                        if (i != blocks.length - 1) const Divider(height: 24),
+                      ]
+                    ],
                   ),
                 ),
               ),
@@ -148,9 +158,12 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(
         builder: (_) => QuestionsScreen(
-          sectionTitle: chapter.sectionTitle,
-          chapterTitle: chapter.chapterTitle,
+          sectionTitle: chapter.rawSectionTitle,
+          chapterTitle: chapter.rawChapterTitle,
           displayTitle: chapter.chapterTitle,
+          rawChapterTitle: chapter.rawChapterTitle,
+          displaySectionTitle:
+              TitleFormatter.parseSectionTitle(chapter.sectionTitle).title,
           initialBlockId: chapter.firstBlockId,
         ),
       ),
@@ -165,6 +178,11 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
     final context = key.currentContext;
     if (context == null) {
       return;
+    }
+    if (_activeBlockId != blockId) {
+      setState(() {
+        _activeBlockId = blockId;
+      });
     }
     Scrollable.ensureVisible(
       context,
@@ -188,10 +206,41 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
         continue;
       }
       final offset = box.localToGlobal(Offset.zero).dy;
-      if (offset >= 0) {
+      if (offset >= 0 && _questionBlockIds.contains(entry.key)) {
+        if (_activeBlockId != entry.key) {
+          setState(() {
+            _activeBlockId = entry.key;
+          });
+        }
         break;
       }
     }
+  }
+
+  Widget _buildRenderItem(
+    DocBlock block,
+    Map<int, QuestionNavItem> questionMap,
+  ) {
+    final key = _blockKeys.putIfAbsent(
+      block.blockId,
+      () => GlobalKey(),
+    );
+    final question = questionMap[block.blockId];
+    return Container(
+      key: key,
+      child: _BlockRenderer(
+        block: block,
+        question: question,
+      ),
+    );
+  }
+
+  String _buildChapterHeader(String rawTitle) {
+    final parsed = TitleFormatter.parseChapterTitle(rawTitle);
+    if (parsed.number == null || parsed.number!.isEmpty) {
+      return parsed.title.trim();
+    }
+    return 'Chapter ${parsed.number}. ${parsed.title}';
   }
 
   @override
@@ -254,14 +303,21 @@ class _QuestionBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final number = question?.questionNumber;
+    final text = block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
+    final baseStyle = theme.textTheme.bodyLarge;
+    final width = MediaQuery.of(context).size.width;
+    final fontSize = (baseStyle?.fontSize ?? 16) -
+        (width < 340 ? 3 : width < 380 ? 2 : 0);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          number == null ? block.normalizedText : '$number. ${block.normalizedText}',
-          style: theme.textTheme.bodyLarge?.copyWith(
+          number == null ? text : '$number. $text',
+          softWrap: true,
+          style: baseStyle?.copyWith(
             fontWeight: FontWeight.w700,
             height: 1.4,
+            fontSize: fontSize,
           ),
         ),
         _BlockImages(block.imageBlobs),
@@ -278,11 +334,13 @@ class _TextBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final text = block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          block.normalizedText,
+          text,
+          softWrap: true,
           style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
         ),
         _BlockImages(block.imageBlobs),
@@ -299,6 +357,7 @@ class _NoteBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final text = block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -310,7 +369,8 @@ class _NoteBlock extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            block.normalizedText,
+            text,
+            softWrap: true,
             style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
           ),
           _BlockImages(block.imageBlobs),
@@ -334,6 +394,7 @@ class _PoetryBlock extends StatelessWidget {
       children: [
         Text(
           text,
+          softWrap: true,
           textAlign: TextAlign.center,
           style: theme.textTheme.bodyMedium?.copyWith(
             fontStyle: FontStyle.italic,
@@ -354,6 +415,7 @@ class _ReadingBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final text = block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -365,7 +427,8 @@ class _ReadingBlock extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            block.normalizedText,
+            text,
+            softWrap: true,
             style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
           ),
           _BlockImages(block.imageBlobs),
@@ -458,18 +521,32 @@ class _BlockImages extends StatelessWidget {
     if (images.isEmpty) {
       return const SizedBox.shrink();
     }
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: Column(
-        children: images
-            .map(
-              (blob) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Image.memory(blob, fit: BoxFit.contain),
-              ),
-            )
-            .toList(),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Column(
+            children: images
+                .map(
+                  (blob) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: ConstrainedBox(
+                        constraints:
+                            BoxConstraints(maxWidth: constraints.maxWidth),
+                        child: Image.memory(
+                          blob,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        );
+      },
     );
   }
 }
@@ -477,39 +554,50 @@ class _BlockImages extends StatelessWidget {
 class _QuestionNavBar extends StatelessWidget {
   final List<QuestionNavItem> questions;
   final ValueChanged<int> onJump;
+  final int? activeBlockId;
 
   const _QuestionNavBar({
     required this.questions,
     required this.onJump,
+    required this.activeBlockId,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return SizedBox(
-      height: 54,
+      height: 44,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
         itemCount: questions.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, __) => const SizedBox(width: 6),
         itemBuilder: (context, index) {
           final item = questions[index];
+          final isActive = item.blockId == activeBlockId;
           return TextButton(
             onPressed: () => onJump(item.blockId),
             style: TextButton.styleFrom(
-              backgroundColor: theme.colorScheme.surface,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              fixedSize: const Size(40, 36),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              backgroundColor: isActive
+                  ? theme.colorScheme.primary.withOpacity(0.12)
+                  : theme.colorScheme.surface,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+              visualDensity: VisualDensity.compact,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
                 side: BorderSide(
-                  color: theme.colorScheme.primary.withOpacity(0.4),
+                  color: theme.colorScheme.primary.withOpacity(
+                    isActive ? 0.5 : 0.35,
+                  ),
                 ),
               ),
             ),
             child: Text(
               '${item.questionNumber}',
               style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.2,
               ),
@@ -522,12 +610,10 @@ class _QuestionNavBar extends StatelessWidget {
 }
 
 class _ChapterNavRow extends StatelessWidget {
-  final String title;
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
 
   const _ChapterNavRow({
-    required this.title,
     required this.onPrevious,
     required this.onNext,
   });
@@ -546,28 +632,56 @@ class _ChapterNavRow extends StatelessWidget {
             iconSize: 18,
             color: theme.colorScheme.onSurface.withOpacity(0.7),
           ),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                border: Border.all(color: theme.colorScheme.primary.withOpacity(0.5)),
-                borderRadius: BorderRadius.circular(8),
-                color: theme.colorScheme.surface,
-              ),
-              child: Text(
-                title,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  letterSpacing: 0.2,
-                ),
-              ),
-            ),
-          ),
+          const Spacer(),
           IconButton(
             onPressed: onNext,
             icon: const Icon(Icons.arrow_forward_ios),
             iconSize: 18,
             color: theme.colorScheme.onSurface.withOpacity(0.7),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChapterHeader extends StatelessWidget {
+  final String sectionTitle;
+  final String chapterTitle;
+
+  const _ChapterHeader({
+    required this.sectionTitle,
+    required this.chapterTitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final width = MediaQuery.of(context).size.width;
+    final titleSize = (theme.textTheme.titleMedium?.fontSize ?? 18) -
+        (width < 340 ? 2 : width < 380 ? 1 : 0);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            sectionTitle,
+            softWrap: true,
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: theme.colorScheme.onSurface.withOpacity(0.75),
+              letterSpacing: 0.2,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            chapterTitle,
+            softWrap: true,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+              fontSize: titleSize,
+            ),
           ),
         ],
       ),
