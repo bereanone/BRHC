@@ -7,6 +7,7 @@ import '../widgets/fade_route.dart';
 import 'about_screen.dart';
 import 'chapters_screen.dart';
 import 'introduction_screen.dart';
+import 'launch_screen.dart';
 
 class SectionsScreen extends StatelessWidget {
   const SectionsScreen({super.key});
@@ -21,7 +22,14 @@ class SectionsScreen extends StatelessWidget {
           icon: const Icon(Icons.arrow_back),
           tooltip: 'Home',
           onPressed: () {
-            Navigator.of(context).pop();
+            final navigator = Navigator.of(context);
+            if (navigator.canPop()) {
+              navigator.pop();
+            } else {
+              navigator.pushReplacement(
+                FadePageRoute<void>(page: const LaunchScreen()),
+              );
+            }
           },
         ),
         title: const Text('Sections'),
