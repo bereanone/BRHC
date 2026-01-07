@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import 'screens/launch_screen.dart';
+import 'startup/startup_data_verification.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await verifyAndPrepareStartupData();
   runApp(const BrhcApp());
 }
 
@@ -24,7 +26,13 @@ class BrhcApp extends StatelessWidget {
     );
 
     return MaterialApp(
-      title: 'Biblical Heritage: Bible Readings for the Home (1914 Edition)',
+      title: 'Bible Readings for the Home Circle',
+      onGenerateTitle: (context) {
+        final width = MediaQuery.sizeOf(context).width;
+        return width < 420
+            ? 'Bible Readings for the Home'
+            : 'Bible Readings for the Home Circle';
+      },
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: false,

@@ -1,0 +1,12 @@
+data_files:
+  - name: brhc.db
+    asset_path: assets/databases/brhc.db
+    sandbox_name: brhc.db
+    read_only: true
+    required: true
+  - name: brhc_user.db
+    asset_path: assets/databases/brhc_user.db
+    sandbox_name: brhc_user.db
+    read_only: false
+    required: true
+sandbox_dir: BRHC

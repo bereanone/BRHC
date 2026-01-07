@@ -40,10 +40,11 @@ class BrhcDatabase {
     final rows = await db.rawQuery(
       'SELECT DISTINCT section_title FROM doc_blocks WHERE section_title IS NOT NULL',
     );
+    final normalizedTarget = _normalizeSectionTitleForMatch(sectionTitle);
     final matches = rows
         .map((row) => row['section_title'] as String)
         .where(
-          (title) => _normalizeSectionTitleForMatch(title) == sectionTitle,
+          (title) => _normalizeSectionTitleForMatch(title) == normalizedTarget,
         )
         .toList();
     if (matches.isEmpty) {
@@ -191,13 +192,16 @@ class BrhcDatabase {
         '''
         SELECT
           chapter_title,
-          MIN(block_id) AS first_block
+          MIN(CASE
+                WHEN block_type NOT IN ('section','chapter') THEN block_id
+              END) AS first_block
         FROM doc_blocks
         WHERE section_title IS NOT NULL
           AND chapter_title IS NOT NULL
           AND chapter_title <> ''
           AND section_title IN (${_placeholders(sectionTitles.length)})
         GROUP BY chapter_title
+        HAVING first_block IS NOT NULL
         ORDER BY first_block
         ''',
         sectionTitles,
@@ -341,7 +345,7 @@ class BrhcDatabase {
         normalized_text,
         table_json
       FROM doc_blocks
-      WHERE block_type IN ('intro_heading', 'intro_paragraph', 'introduction')
+      WHERE block_type IN ('intro_heading', 'intro_paragraph', 'introduction', 'intro_rtf')
       ORDER BY block_id
       ''',
     );
@@ -374,7 +378,9 @@ class BrhcDatabase {
     }
     final currentRows = await db.rawQuery(
       '''
-      SELECT MIN(block_id) AS first_block
+      SELECT MIN(CASE
+                   WHEN block_type NOT IN ('section','chapter') THEN block_id
+                 END) AS first_block
       FROM doc_blocks
       WHERE section_title IS NOT NULL
         AND chapter_title IS NOT NULL
@@ -394,23 +400,21 @@ class BrhcDatabase {
     final rows = await db.rawQuery(
       '''
       WITH chapters AS (
-        SELECT section_title, chapter_title, MIN(block_id) AS first_block
+        SELECT section_title, chapter_title,
+               MIN(CASE
+                     WHEN block_type NOT IN ('section','chapter') THEN block_id
+                   END) AS first_block
         FROM doc_blocks
-        WHERE section_title IS NOT NULL
-          AND chapter_title IS NOT NULL
-          AND section_title IN (${_placeholders(sectionTitles.length)})
+        WHERE section_title IS NOT NULL AND chapter_title IS NOT NULL
         GROUP BY section_title, chapter_title
       )
       SELECT section_title, chapter_title, first_block
       FROM chapters
-      WHERE first_block < ?
+      WHERE first_block IS NOT NULL AND first_block < ?
       ORDER BY first_block DESC
       LIMIT 1
       ''',
-      [
-        ...sectionTitles,
-        currentFirst,
-      ],
+      [currentFirst],
     );
     if (rows.isEmpty) {
       return null;
@@ -426,6 +430,106 @@ class BrhcDatabase {
   }
 
   Future<ChapterEntry?> fetchNextChapter({
+    required String sectionTitle,
+    required String chapterTitle,
+  }) async {
+    final db = await database;
+    final sectionTitles = await _resolveSectionTitles(db, sectionTitle);
+    final chapterTitles =
+        await _resolveChapterTitles(db, sectionTitles, chapterTitle);
+    if (sectionTitles.isEmpty || chapterTitles.isEmpty) {
+      return null;
+    }
+    final currentRows = await db.rawQuery(
+      '''
+      SELECT MIN(CASE
+                   WHEN block_type NOT IN ('section','chapter') THEN block_id
+                 END) AS first_block
+      FROM doc_blocks
+      WHERE section_title IS NOT NULL
+        AND chapter_title IS NOT NULL
+        AND section_title IN (${_placeholders(sectionTitles.length)})
+        AND chapter_title IN (${_placeholders(chapterTitles.length)})
+      ''',
+      [
+        ...sectionTitles,
+        ...chapterTitles,
+      ],
+    );
+    final currentFirst = (currentRows.first['first_block'] as int?) ?? 0;
+    if (currentFirst == 0) {
+      return null;
+    }
+
+    final rows = await db.rawQuery(
+      '''
+      WITH chapters AS (
+        SELECT section_title, chapter_title,
+               MIN(CASE
+                     WHEN block_type NOT IN ('section','chapter') THEN block_id
+                   END) AS first_block
+        FROM doc_blocks
+        WHERE section_title IS NOT NULL AND chapter_title IS NOT NULL
+        GROUP BY section_title, chapter_title
+      )
+      SELECT section_title, chapter_title, first_block
+      FROM chapters
+      WHERE first_block IS NOT NULL AND first_block > ?
+      ORDER BY first_block ASC
+      LIMIT 1
+      ''',
+      [currentFirst],
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    final row = rows.first;
+    return ChapterEntry(
+      sectionTitle: _stripTagPrefix(row['section_title'] as String),
+      chapterTitle: _stripTagPrefix(row['chapter_title'] as String),
+      rawSectionTitle: row['section_title'] as String,
+      rawChapterTitle: row['chapter_title'] as String,
+      firstBlockId: row['first_block'] as int,
+    );
+  }
+
+  Future<Map<int, List<Uint8List>>> _loadImagesForBlocks(
+    Database db,
+    List<int> blockIds,
+  ) async {
+    return {};
+  }
+
+  Future<List<Map<String, Object?>>> fetchAllQuestionAnchors() async {
+    final db = await database;
+    return db.rawQuery(
+      '''
+      SELECT block_id, question_number, section_title, chapter_title
+      FROM d_questions
+      WHERE block_id IS NOT NULL
+      ORDER BY block_id
+      ''',
+    );
+  }
+
+  Future<Uint8List?> fetchImageBlobByFilename(String filename) async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT image_blob
+      FROM brhc_images
+      WHERE LOWER(filename) = LOWER(?)
+      LIMIT 1
+      ''',
+      [filename],
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    return rows.first['image_blob'] as Uint8List?;
+  }
+
+  Future<ChapterEntry?> fetchPreviousChapterLegacy({
     required String sectionTitle,
     required String chapterTitle,
   }) async {
@@ -454,27 +558,21 @@ class BrhcDatabase {
     if (currentFirst == 0) {
       return null;
     }
-
     final rows = await db.rawQuery(
       '''
       WITH chapters AS (
         SELECT section_title, chapter_title, MIN(block_id) AS first_block
         FROM doc_blocks
-        WHERE section_title IS NOT NULL
-          AND chapter_title IS NOT NULL
-          AND section_title IN (${_placeholders(sectionTitles.length)})
+        WHERE section_title IS NOT NULL AND chapter_title IS NOT NULL
         GROUP BY section_title, chapter_title
       )
       SELECT section_title, chapter_title, first_block
       FROM chapters
-      WHERE first_block > ?
-      ORDER BY first_block ASC
+      WHERE first_block < ?
+      ORDER BY first_block DESC
       LIMIT 1
       ''',
-      [
-        ...sectionTitles,
-        currentFirst,
-      ],
+      [currentFirst],
     );
     if (rows.isEmpty) {
       return null;
@@ -489,33 +587,281 @@ class BrhcDatabase {
     );
   }
 
-  Future<Map<int, List<Uint8List>>> _loadImagesForBlocks(
-    Database db,
-    List<int> blockIds,
-  ) async {
-    if (blockIds.isEmpty) {
-      return {};
+  Future<ChapterEntry?> fetchNextChapterLegacy({
+    required String sectionTitle,
+    required String chapterTitle,
+  }) async {
+    final db = await database;
+    final sectionTitles = await _resolveSectionTitles(db, sectionTitle);
+    final chapterTitles =
+        await _resolveChapterTitles(db, sectionTitles, chapterTitle);
+    if (sectionTitles.isEmpty || chapterTitles.isEmpty) {
+      return null;
     }
-    final placeholders = List.filled(blockIds.length, '?').join(',');
+    final currentRows = await db.rawQuery(
+      '''
+      SELECT MIN(block_id) AS first_block
+      FROM doc_blocks
+      WHERE section_title IS NOT NULL
+        AND chapter_title IS NOT NULL
+        AND section_title IN (${_placeholders(sectionTitles.length)})
+        AND chapter_title IN (${_placeholders(chapterTitles.length)})
+      ''',
+      [
+        ...sectionTitles,
+        ...chapterTitles,
+      ],
+    );
+    final currentFirst = (currentRows.first['first_block'] as int?) ?? 0;
+    if (currentFirst == 0) {
+      return null;
+    }
     final rows = await db.rawQuery(
       '''
-      SELECT m.block_id, i.image_blob
-      FROM brhc_image_block_map m
-      JOIN brhc_images i ON i.image_id = m.image_id
-      WHERE m.block_id IN ($placeholders)
-      ORDER BY m.block_id, m.image_id
+      WITH chapters AS (
+        SELECT section_title, chapter_title, MIN(block_id) AS first_block
+        FROM doc_blocks
+        WHERE section_title IS NOT NULL AND chapter_title IS NOT NULL
+        GROUP BY section_title, chapter_title
+      )
+      SELECT section_title, chapter_title, first_block
+      FROM chapters
+      WHERE first_block > ?
+      ORDER BY first_block ASC
+      LIMIT 1
       ''',
-      blockIds,
+      [currentFirst],
     );
-    final imageMap = <int, List<Uint8List>>{};
-    for (final row in rows) {
-      final blockId = row['block_id'] as int;
-      final blob = row['image_blob'] as Uint8List?;
-      if (blob == null) {
-        continue;
-      }
-      imageMap.putIfAbsent(blockId, () => []).add(blob);
+    if (rows.isEmpty) {
+      return null;
     }
-    return imageMap;
+    final row = rows.first;
+    return ChapterEntry(
+      sectionTitle: _stripTagPrefix(row['section_title'] as String),
+      chapterTitle: _stripTagPrefix(row['chapter_title'] as String),
+      rawSectionTitle: row['section_title'] as String,
+      rawChapterTitle: row['chapter_title'] as String,
+      firstBlockId: row['first_block'] as int,
+    );
+  }
+
+  Future<ChapterEntry?> fetchPreviousSectionWithContent({
+    required String sectionTitle,
+  }) async {
+    final db = await database;
+    final sectionTitles = await _resolveSectionTitles(db, sectionTitle);
+    if (sectionTitles.isEmpty) {
+      return null;
+    }
+    final currentRows = await db.rawQuery(
+      '''
+      SELECT MIN(block_id) AS first_block
+      FROM doc_blocks
+      WHERE section_title IN (${_placeholders(sectionTitles.length)})
+      ''',
+      sectionTitles,
+    );
+    final currentFirst = (currentRows.first['first_block'] as int?) ?? 0;
+    if (currentFirst == 0) {
+      return null;
+    }
+    final rows = await db.rawQuery(
+      '''
+      WITH sections AS (
+        SELECT section_title, MIN(block_id) AS first_block
+        FROM doc_blocks
+        WHERE section_title IS NOT NULL
+        GROUP BY section_title
+      )
+      SELECT section_title, first_block
+      FROM sections
+      WHERE first_block < ?
+      ORDER BY first_block DESC
+      LIMIT 1
+      ''',
+      [currentFirst],
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    final prevSection = rows.first['section_title'] as String;
+    return _firstContentfulChapterForSection(db, prevSection, ascending: false);
+  }
+
+  Future<ChapterEntry?> fetchNextSectionWithContent({
+    required String sectionTitle,
+  }) async {
+    final db = await database;
+    final sectionTitles = await _resolveSectionTitles(db, sectionTitle);
+    if (sectionTitles.isEmpty) {
+      return null;
+    }
+    final currentRows = await db.rawQuery(
+      '''
+      SELECT MIN(block_id) AS first_block
+      FROM doc_blocks
+      WHERE section_title IN (${_placeholders(sectionTitles.length)})
+      ''',
+      sectionTitles,
+    );
+    final currentFirst = (currentRows.first['first_block'] as int?) ?? 0;
+    if (currentFirst == 0) {
+      return null;
+    }
+    final rows = await db.rawQuery(
+      '''
+      WITH sections AS (
+        SELECT section_title, MIN(block_id) AS first_block
+        FROM doc_blocks
+        WHERE section_title IS NOT NULL
+        GROUP BY section_title
+      )
+      SELECT section_title, first_block
+      FROM sections
+      WHERE first_block > ?
+      ORDER BY first_block ASC
+      LIMIT 1
+      ''',
+      [currentFirst],
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    final nextSection = rows.first['section_title'] as String;
+    return _firstContentfulChapterForSection(db, nextSection, ascending: true);
+  }
+
+  Future<ChapterEntry?> fetchPreviousSectionWithContentByBlock({
+    required int blockId,
+  }) async {
+    final db = await database;
+    final currentSectionRow = await db.rawQuery(
+      '''
+      SELECT section_title
+      FROM doc_blocks
+      WHERE block_id <= ?
+        AND section_title IS NOT NULL
+      ORDER BY block_id DESC
+      LIMIT 1
+      ''',
+      [blockId],
+    );
+    if (currentSectionRow.isEmpty) {
+      return null;
+    }
+    final currentSection = currentSectionRow.first['section_title'] as String;
+    final currentOrderRows = await db.rawQuery(
+      '''
+      SELECT order_index
+      FROM brhc_sections
+      WHERE section_title = ?
+      LIMIT 1
+      ''',
+      [currentSection],
+    );
+    if (currentOrderRows.isEmpty) {
+      return null;
+    }
+    final currentOrder = currentOrderRows.first['order_index'] as int;
+    final prevRows = await db.rawQuery(
+      '''
+      SELECT section_title, order_index
+      FROM brhc_sections
+      WHERE order_index < ?
+      ORDER BY order_index DESC
+      LIMIT 1
+      ''',
+      [currentOrder],
+    );
+    if (prevRows.isEmpty) {
+      return null;
+    }
+    final prevSection = prevRows.first['section_title'] as String;
+    return _firstContentfulChapterForSection(db, prevSection, ascending: false);
+  }
+
+  Future<ChapterEntry?> fetchNextSectionWithContentByBlock({
+    required int blockId,
+  }) async {
+    final db = await database;
+    final currentSectionRow = await db.rawQuery(
+      '''
+      SELECT section_title
+      FROM doc_blocks
+      WHERE block_id <= ?
+        AND section_title IS NOT NULL
+      ORDER BY block_id DESC
+      LIMIT 1
+      ''',
+      [blockId],
+    );
+    if (currentSectionRow.isEmpty) {
+      return null;
+    }
+    final currentSection = currentSectionRow.first['section_title'] as String;
+    final currentOrderRows = await db.rawQuery(
+      '''
+      SELECT order_index
+      FROM brhc_sections
+      WHERE section_title = ?
+      LIMIT 1
+      ''',
+      [currentSection],
+    );
+    if (currentOrderRows.isEmpty) {
+      return null;
+    }
+    final currentOrder = currentOrderRows.first['order_index'] as int;
+    final nextRows = await db.rawQuery(
+      '''
+      SELECT section_title, order_index
+      FROM brhc_sections
+      WHERE order_index > ?
+      ORDER BY order_index ASC
+      LIMIT 1
+      ''',
+      [currentOrder],
+    );
+    if (nextRows.isEmpty) {
+      return null;
+    }
+    final nextSection = nextRows.first['section_title'] as String;
+    return _firstContentfulChapterForSection(db, nextSection, ascending: true);
+  }
+
+  Future<ChapterEntry?> _firstContentfulChapterForSection(
+    Database db,
+    String rawSectionTitle, {
+    required bool ascending,
+  }) async {
+    final rows = await db.rawQuery(
+      '''
+      SELECT
+        section_title,
+        chapter_title,
+        MIN(CASE
+              WHEN block_type NOT IN ('section','chapter') THEN block_id
+            END) AS first_block
+      FROM doc_blocks
+      WHERE section_title = ?
+        AND chapter_title IS NOT NULL
+      GROUP BY section_title, chapter_title
+      HAVING first_block IS NOT NULL
+      ORDER BY first_block ${ascending ? 'ASC' : 'DESC'}
+      LIMIT 1
+      ''',
+      [rawSectionTitle],
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    final row = rows.first;
+    return ChapterEntry(
+      sectionTitle: _stripTagPrefix(row['section_title'] as String),
+      chapterTitle: _stripTagPrefix(row['chapter_title'] as String),
+      rawSectionTitle: row['section_title'] as String,
+      rawChapterTitle: row['chapter_title'] as String,
+      firstBlockId: row['first_block'] as int,
+    );
   }
 }

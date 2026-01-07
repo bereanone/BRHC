@@ -9,8 +9,16 @@ import 'chapters_screen.dart';
 import 'introduction_screen.dart';
 import 'launch_screen.dart';
 
-class SectionsScreen extends StatelessWidget {
+class SectionsScreen extends StatefulWidget {
   const SectionsScreen({super.key});
+
+  @override
+  State<SectionsScreen> createState() => _SectionsScreenState();
+}
+
+class _SectionsScreenState extends State<SectionsScreen> {
+  int _currentSectionIndex = 0;
+  List<Section>? _sections;
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +66,7 @@ class SectionsScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
           final sections = snapshot.data ?? [];
+          _sections = sections;
           if (sections.isEmpty) {
             return const Center(
               child: Text(
@@ -79,9 +88,15 @@ class SectionsScreen extends StatelessWidget {
               _SectionButton(
                 title: _displaySectionTitle(sections[i], i + 1),
                 onTap: () {
+                  setState(() {
+                    _currentSectionIndex = i;
+                  });
                   Navigator.of(context).push(
                     FadePageRoute<void>(
-                      page: ChaptersScreen(sectionTitle: sections[i].rawTitle),
+                      page: ChaptersScreen(
+                        sectionTitle: sections[i].rawTitle,
+                        sectionIndex: i,
+                      ),
                     ),
                   );
                 },
@@ -99,8 +114,22 @@ class SectionsScreen extends StatelessWidget {
     );
   }
 
+  void _navigateToSection(int sectionIndex) {
+    if (_sections == null || sectionIndex < 0 || sectionIndex >= _sections!.length) return;
+    final section = _sections![sectionIndex];
+    Navigator.of(context).push(
+      FadePageRoute<void>(
+        page: ChaptersScreen(
+          sectionTitle: section.rawTitle,
+          sectionIndex: sectionIndex,
+        ),
+      ),
+    );
+  }
+
   String _displaySectionTitle(Section section, int fallbackIndex) {
     final parsed = TitleFormatter.parseSectionTitle(section.rawTitle);
+    // Always number: <number>. <title> (no duplication)
     final number = parsed.number ?? fallbackIndex.toString();
     final title = parsed.title.isEmpty ? section.title : parsed.title;
     return '$number. $title';
@@ -133,6 +162,7 @@ class _SectionButton extends StatelessWidget {
           style: theme.textTheme.titleMedium?.copyWith(
             fontWeight: FontWeight.w400,
             letterSpacing: 0.2,
+            color: const Color(0xFF1F1B17),
           ),
         ),
       ),

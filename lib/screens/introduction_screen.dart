@@ -9,91 +9,117 @@ class IntroductionScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Introduction'),
-      ),
-      body: FutureBuilder<List<DocBlock>>(
-        future: BrhcDatabase.instance.fetchIntroductionBlocks(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
+    return FutureBuilder<List<DocBlock>>(
+      future: BrhcDatabase.instance.fetchIntroductionBlocks(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final blocks = snapshot.data ?? [];
+        if (blocks.isEmpty) {
+          debugPrint('Introduction blocks missing or empty.');
+          return const Scaffold(
+            body: Center(child: Text('No introduction content found.')),
+          );
+        }
+        final titleBlock = blocks.first;
+        final titleText = _stripMarkers(_stripMarkup(titleBlock.rawText)).trim();
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(
+              titleText.isEmpty ? 'Introduction' : titleText,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            centerTitle: true,
+          ),
+          body: _buildIntroBody(theme, blocks.skip(1).toList(), titleText),
+        );
+      },
+    );
+  }
+
+  Widget _buildIntroBody(
+    ThemeData theme,
+    List<DocBlock> blocks,
+    String titleText,
+  ) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: blocks.map((block) {
+          final rawText = block.rawText;
+          final normalizedText = block.normalizedText;
+          final plainText = _stripMarkers(_stripMarkup(rawText)).trim();
+          if (plainText.isEmpty || plainText == titleText) {
+            return const SizedBox.shrink();
           }
-          final blocks = snapshot.data ?? [];
-          if (blocks.isEmpty) {
-            debugPrint('Introduction blocks missing or empty.');
-            return const Center(
-              child: Text('No introduction content found.'),
+
+          if (block.blockType == 'intro_paragraph' && _isAllBoldWrapper(normalizedText)) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Text(
+                _stripMarkers(_stripMarkup(normalizedText)).trim(),
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             );
           }
-          return ListView.separated(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            itemCount: blocks.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 12),
-            itemBuilder: (context, index) {
-              final block = blocks[index];
-              final text =
-                  block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
-              final isHeading = block.blockType == 'intro_heading';
-              final baseStyle = (isHeading
-                      ? theme.textTheme.titleMedium
-                      : theme.textTheme.bodyMedium)
-                  ?.copyWith(
-                    fontWeight: isHeading ? FontWeight.w700 : FontWeight.w400,
-                    height: 1.5,
-                  );
-              return RichText(
-                text: _renderInlineHtml(text, baseStyle),
-              );
-            },
+
+          if (block.blockType == 'intro_heading') {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Text(
+                plainText,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            );
+          }
+
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              plainText,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                height: 1.5,
+                color: const Color(0xFF2E2A25),
+              ),
+              textAlign: TextAlign.left,
+            ),
           );
-        },
+        }).toList(),
       ),
     );
   }
 
-  TextSpan _renderInlineHtml(String text, TextStyle? baseStyle) {
-    final normalized = text
-        .replaceAll(RegExp(r'<\\s*br\\s*/?>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'<\\s*/?p\\s*>', caseSensitive: false), '\n\n');
-    final spans = <TextSpan>[];
-    var buffer = StringBuffer();
-    var bold = false;
-    var italic = false;
-
-    void flush() {
-      if (buffer.isEmpty) {
-        return;
-      }
-      spans.add(
-        TextSpan(
-          text: buffer.toString(),
-          style: baseStyle?.copyWith(
-            fontWeight: bold ? FontWeight.w700 : baseStyle?.fontWeight,
-            fontStyle: italic ? FontStyle.italic : baseStyle?.fontStyle,
-          ),
-        ),
-      );
-      buffer.clear();
+  bool _isAllBoldWrapper(String text) {
+    final trimmed = text.trim();
+    if (!trimmed.toLowerCase().startsWith('<strong>') ||
+        !trimmed.toLowerCase().endsWith('</strong>')) {
+      return false;
     }
+    final inner = trimmed
+        .replaceFirst(RegExp(r'^<\s*strong\s*>', caseSensitive: false), '')
+        .replaceFirst(RegExp(r'<\s*/\s*strong\s*>$', caseSensitive: false), '')
+        .trim();
+    return inner.isNotEmpty;
+  }
 
-    final tagRegex = RegExp(r'<\\/?(strong|b|em|i)>', caseSensitive: false);
-    var index = 0;
-    for (final match in tagRegex.allMatches(normalized)) {
-      buffer.write(normalized.substring(index, match.start));
-      flush();
-      final tag = match.group(1)?.toLowerCase() ?? '';
-      final isClosing = normalized.substring(match.start + 1).startsWith('/');
-      if (tag == 'strong' || tag == 'b') {
-        bold = !isClosing;
-      } else if (tag == 'em' || tag == 'i') {
-        italic = !isClosing;
-      }
-      index = match.end;
-    }
-    buffer.write(normalized.substring(index));
-    flush();
+  String _stripMarkers(String text) {
+    return text.replaceFirst(RegExp(r'^\s*\[[A-Za-z]+\]\s*'), '');
+  }
 
-    return TextSpan(children: spans, style: baseStyle);
+  String _stripMarkup(String text) {
+    return text.replaceAll(RegExp(r'<[^>]+>'), '').replaceAll('\n', ' ');
   }
 }
