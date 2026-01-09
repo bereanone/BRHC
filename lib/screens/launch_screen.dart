@@ -75,7 +75,7 @@ class LaunchScreen extends StatelessWidget {
               Expanded(
                 child: Center(
                   child: Image.asset(
-                    'assets/images/Logo2.png',
+                    'assets/Images/Logo2.png',
                     height: 52,
                     fit: BoxFit.contain,
                   ),
