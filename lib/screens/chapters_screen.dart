@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../data/brhc_database.dart';
 import '../models/brhc_models.dart';
+import '../utils/font_scale.dart';
 import '../utils/title_formatter.dart';
 import '../widgets/fade_route.dart';
 import 'questions_screen.dart';
@@ -16,6 +17,7 @@ class ChaptersScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scale = _fontScale(context);
 
     return Scaffold(
       body: SafeArea(
@@ -32,8 +34,6 @@ class ChaptersScreen extends StatelessWidget {
                 parsedSection.number != null && parsedSection.number!.isNotEmpty
                     ? '${parsedSection.number}. ${parsedSection.title}'
                     : parsedSection.title;
-          final sectionAnchorBlockId =
-              chapters.isNotEmpty ? chapters.first.firstBlockId : null;
           final listItems = List.generate(chapters.length, (index) {
               final chapter = chapters[index];
               final parsed = TitleFormatter.parseChapterTitle(chapter.rawChapterTitle);
@@ -67,7 +67,7 @@ class ChaptersScreen extends StatelessWidget {
                     displayTitle,
                     textAlign: TextAlign.left,
                     softWrap: true,
-                    style: theme.textTheme.bodyLarge?.copyWith(
+                    style: _scaleStyle(theme.textTheme.bodyLarge, scale)?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -90,26 +90,20 @@ class ChaptersScreen extends StatelessWidget {
                             IconButton(
                               icon: const Icon(Icons.arrow_back_ios_new),
                               tooltip: 'Previous section',
-                              onPressed: sectionAnchorBlockId == null
-                                  ? null
-                                  : () async {
-                                      final prevSection =
-                                          await BrhcDatabase.instance
-                                              .fetchPreviousSectionWithContentByBlock(
-                                        blockId: sectionAnchorBlockId,
-                                      );
-                                      if (prevSection == null || !context.mounted) {
-                                        return;
-                                      }
-                                      Navigator.of(context).pushReplacement(
-                                        FadePageRoute<void>(
-                                          page: ChaptersScreen(
-                                            sectionTitle:
-                                                prevSection.rawSectionTitle,
-                                          ),
-                                        ),
-                                      );
-                                    },
+                              onPressed: () async {
+                                final prevSection = await BrhcDatabase.instance
+                                    .fetchPreviousSectionWithContent(sectionTitle: sectionTitle);
+                                if (prevSection == null || !context.mounted) {
+                                  return;
+                                }
+                                Navigator.of(context).pushReplacement(
+                                  FadePageRoute<void>(
+                                    page: ChaptersScreen(
+                                      sectionTitle: prevSection.rawSectionTitle,
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
                             Expanded(
                               child: GestureDetector(
@@ -124,7 +118,8 @@ class ChaptersScreen extends StatelessWidget {
                                   displaySectionTitle,
                                   textAlign: TextAlign.center,
                                   softWrap: true,
-                                  style: theme.textTheme.titleLarge?.copyWith(
+                                  style: _scaleStyle(theme.textTheme.titleLarge, scale)
+                                      ?.copyWith(
                                     color: theme.colorScheme.onSurface,
                                     fontWeight: FontWeight.w700,
                                     letterSpacing: 0.2,
@@ -135,26 +130,20 @@ class ChaptersScreen extends StatelessWidget {
                             IconButton(
                               icon: const Icon(Icons.arrow_forward_ios),
                               tooltip: 'Next section',
-                              onPressed: sectionAnchorBlockId == null
-                                  ? null
-                                  : () async {
-                                      final nextSection =
-                                          await BrhcDatabase.instance
-                                              .fetchNextSectionWithContentByBlock(
-                                        blockId: sectionAnchorBlockId,
-                                      );
-                                      if (nextSection == null || !context.mounted) {
-                                        return;
-                                      }
-                                      Navigator.of(context).pushReplacement(
-                                        FadePageRoute<void>(
-                                          page: ChaptersScreen(
-                                            sectionTitle:
-                                                nextSection.rawSectionTitle,
-                                          ),
-                                        ),
-                                      );
-                                    },
+                              onPressed: () async {
+                                final nextSection = await BrhcDatabase.instance
+                                    .fetchNextSectionWithContent(sectionTitle: sectionTitle);
+                                if (nextSection == null || !context.mounted) {
+                                  return;
+                                }
+                                Navigator.of(context).pushReplacement(
+                                  FadePageRoute<void>(
+                                    page: ChaptersScreen(
+                                      sectionTitle: nextSection.rawSectionTitle,
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
                           ],
                         ),
@@ -162,7 +151,8 @@ class ChaptersScreen extends StatelessWidget {
                         Text(
                           'Chapters',
                           textAlign: TextAlign.center,
-                          style: theme.textTheme.bodyMedium?.copyWith(
+                          style: _scaleStyle(theme.textTheme.bodyMedium, scale)
+                              ?.copyWith(
                             color: theme.colorScheme.onSurface.withOpacity(0.7),
                             fontWeight: FontWeight.w500,
                             letterSpacing: 0.2,
@@ -181,4 +171,14 @@ class ChaptersScreen extends StatelessWidget {
     );
   }
 
+}
+
+double _fontScale(BuildContext context) {
+  return FontScaleScope.maybeOf(context)?.scale ?? 1.0;
+}
+
+TextStyle? _scaleStyle(TextStyle? style, double scale) {
+  final fontSize = style?.fontSize;
+  if (fontSize == null) return style;
+  return style!.copyWith(fontSize: fontSize * scale);
 }

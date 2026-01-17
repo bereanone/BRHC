@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../widgets/fade_route.dart';
+import 'font_settings_screen.dart';
+import 'how_to_use_screen.dart';
 import 'sections_screen.dart';
 
 class LaunchScreen extends StatelessWidget {
@@ -14,71 +16,119 @@ class LaunchScreen extends StatelessWidget {
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Stack(
+            fit: StackFit.expand,
             children: [
-              Text(
-                'Bible Readings for the Home',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.2,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '1914 Edition',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  letterSpacing: 0.8,
-                ),
-              ),
-              const SizedBox(height: 26),
-              Text(
-                '“But sanctify the Lord God in your hearts: and be ready always to give '
-                'an answer to every man that asketh you a reason of the hope that is in '
-                'you with meekness and fear.”',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  fontStyle: FontStyle.italic,
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '— 1 Peter 3:15 (KJV)',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-              const SizedBox(height: 28),
-              SizedBox(
-                width: 220,
-                height: 56,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.of(context).pushReplacement(
-                      FadePageRoute<void>(page: const SectionsScreen()),
-                    );
-                  },
-                  child: const Text(
-                    'ENTER',
-                    style: TextStyle(
-                      letterSpacing: 1.6,
-                      fontWeight: FontWeight.w600,
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Bible Readings for the Home',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.2,
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Expanded(
-                child: Center(
-                  child: Image.asset(
-                    'assets/Images/Logo2.png',
-                    height: 52,
-                    fit: BoxFit.contain,
+                  const SizedBox(height: 6),
+                  Text(
+                    '1914 Edition',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      letterSpacing: 0.8,
+                    ),
                   ),
+                  const SizedBox(height: 26),
+                  Text(
+                    '“But sanctify the Lord God in your hearts: and be ready always to give '
+                    'an answer to every man that asketh you a reason of the hope that is in '
+                    'you with meekness and fear.”',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      fontStyle: FontStyle.italic,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '— 1 Peter 3:15 (KJV)',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  SizedBox(
+                    width: 220,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          FadePageRoute<void>(page: const SectionsScreen()),
+                        );
+                      },
+                      child: const Text(
+                        'ENTER',
+                        style: TextStyle(
+                          letterSpacing: 1.6,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Expanded(
+                    child: Center(
+                      child: Image.asset(
+                        'assets/Images/Logo2.png',
+                        height: 104,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              Positioned(
+                right: 4,
+                bottom: 4,
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: IconButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            FadePageRoute<void>(page: const HowToUseScreen()),
+                          );
+                        },
+                        icon: const Icon(Icons.help_outline),
+                        tooltip: 'Help',
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: IconButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            FadePageRoute<void>(page: const FontSettingsScreen()),
+                          );
+                        },
+                        icon: const Icon(Icons.settings),
+                        tooltip: 'Font settings',
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],

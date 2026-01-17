@@ -1,16 +1,28 @@
 import 'package:flutter/material.dart';
 
+import 'data/brhc_database.dart';
 import 'screens/launch_screen.dart';
 import 'startup/startup_data_verification.dart';
+import 'utils/font_scale.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await verifyAndPrepareStartupData();
-  runApp(const BrhcApp());
+  final fontScale = await BrhcDatabase.instance.fetchFontScale();
+  runApp(
+    BrhcApp(
+      fontScaleController: FontScaleController(fontScale),
+    ),
+  );
 }
 
 class BrhcApp extends StatelessWidget {
-  const BrhcApp({super.key});
+  const BrhcApp({
+    super.key,
+    required this.fontScaleController,
+  });
+
+  final FontScaleController fontScaleController;
 
   @override
   Widget build(BuildContext context) {
@@ -25,63 +37,66 @@ class BrhcApp extends StatelessWidget {
       displayColor: ink,
     );
 
-    return MaterialApp(
-      title: 'Bible Readings for the Home Circle',
-      onGenerateTitle: (context) {
-        final width = MediaQuery.sizeOf(context).width;
-        return width < 420
-            ? 'Bible Readings for the Home'
-            : 'Bible Readings for the Home Circle';
-      },
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: false,
-        scaffoldBackgroundColor: parchment,
-        colorScheme: const ColorScheme.light(
-          primary: accent,
-          secondary: accent,
-          surface: surface,
-          background: parchment,
-          onPrimary: Color(0xFFF9F4EC),
-          onSurface: ink,
-          onBackground: ink,
-        ),
-        textTheme: baseText,
-        appBarTheme: const AppBarTheme(
-          backgroundColor: parchment,
-          foregroundColor: ink,
-          elevation: 0,
-          centerTitle: true,
-          titleTextStyle: TextStyle(
-            fontFamily: 'serif',
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-            color: ink,
+    return FontScaleScope(
+      notifier: fontScaleController,
+      child: MaterialApp(
+        title: 'Bible Readings for the Home Circle',
+        onGenerateTitle: (context) {
+          final width = MediaQuery.sizeOf(context).width;
+          return width < 420
+              ? 'Bible Readings for the Home'
+              : 'Bible Readings for the Home Circle';
+        },
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          useMaterial3: false,
+          scaffoldBackgroundColor: parchment,
+          colorScheme: const ColorScheme.light(
+            primary: accent,
+            secondary: accent,
+            surface: surface,
+            background: parchment,
+            onPrimary: Color(0xFFF9F4EC),
+            onSurface: ink,
+            onBackground: ink,
           ),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: accent,
-            foregroundColor: const Color(0xFFF9F4EC),
-            textStyle: const TextStyle(
-              fontFamily: 'serif',
-              fontWeight: FontWeight.w600,
-            ),
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        ),
-        textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(
+          textTheme: baseText,
+          appBarTheme: const AppBarTheme(
+            backgroundColor: parchment,
             foregroundColor: ink,
-            textStyle: const TextStyle(fontFamily: 'serif'),
+            elevation: 0,
+            centerTitle: true,
+            titleTextStyle: TextStyle(
+              fontFamily: 'serif',
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: ink,
+            ),
           ),
+          elevatedButtonTheme: ElevatedButtonThemeData(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: accent,
+              foregroundColor: const Color(0xFFF9F4EC),
+              textStyle: const TextStyle(
+                fontFamily: 'serif',
+                fontWeight: FontWeight.w600,
+              ),
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
+          textButtonTheme: TextButtonThemeData(
+            style: TextButton.styleFrom(
+              foregroundColor: ink,
+              textStyle: const TextStyle(fontFamily: 'serif'),
+            ),
+          ),
+          dividerColor: ink.withOpacity(0.25),
         ),
-        dividerColor: ink.withOpacity(0.25),
+        home: const LaunchScreen(),
       ),
-      home: const LaunchScreen(),
     );
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../data/brhc_database.dart';
 import '../models/brhc_models.dart';
+import '../utils/font_scale.dart';
 import '../utils/title_formatter.dart';
 import '../widgets/fade_route.dart';
 import 'about_screen.dart';
@@ -23,6 +24,7 @@ class _SectionsScreenState extends State<SectionsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scale = _fontScale(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -30,15 +32,10 @@ class _SectionsScreenState extends State<SectionsScreen> {
           icon: const Icon(Icons.arrow_back),
           tooltip: 'Home',
           onPressed: () {
-            final navigator = Navigator.of(context);
-            if (navigator.canPop()) {
-              navigator.pop();
-            } else {
-              // Sections can be the root; replace with entry screen to avoid empty stack.
-              navigator.pushReplacement(
-                FadePageRoute<void>(page: const LaunchScreen()),
-              );
-            }
+            Navigator.of(context).pushAndRemoveUntil(
+              FadePageRoute<void>(page: const LaunchScreen()),
+              (route) => false,
+            );
           },
         ),
         title: const Text('Sections'),
@@ -51,7 +48,7 @@ class _SectionsScreenState extends State<SectionsScreen> {
             },
             child: Text(
               'About',
-              style: theme.textTheme.titleSmall?.copyWith(
+              style: _scaleStyle(theme.textTheme.titleSmall, scale)?.copyWith(
                 color: theme.colorScheme.onSurface,
                 letterSpacing: 0.6,
               ),
@@ -145,6 +142,7 @@ class _SectionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scale = _fontScale(context);
 
     return GestureDetector(
       onTap: onTap,
@@ -159,7 +157,7 @@ class _SectionButton extends StatelessWidget {
           title,
           textAlign: TextAlign.left,
           softWrap: true,
-          style: theme.textTheme.titleMedium?.copyWith(
+          style: _scaleStyle(theme.textTheme.titleMedium, scale)?.copyWith(
             fontWeight: FontWeight.w400,
             letterSpacing: 0.2,
             color: const Color(0xFF1F1B17),
@@ -168,4 +166,14 @@ class _SectionButton extends StatelessWidget {
       ),
     );
   }
+}
+
+double _fontScale(BuildContext context) {
+  return FontScaleScope.maybeOf(context)?.scale ?? 1.0;
+}
+
+TextStyle? _scaleStyle(TextStyle? style, double scale) {
+  final fontSize = style?.fontSize;
+  if (fontSize == null) return style;
+  return style!.copyWith(fontSize: fontSize * scale);
 }

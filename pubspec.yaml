@@ -66,6 +66,7 @@ flutter:
     - assets/seal.png
     - assets/biblical_heritage_icon.png
     - assets/Images/Logo2.png
+    - assets/Images/brhc_1914_cover.jpg
     
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

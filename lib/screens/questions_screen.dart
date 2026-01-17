@@ -7,9 +7,13 @@ import 'package:flutter/rendering.dart';
 import '../data/brhc_database.dart';
 import '../models/brhc_models.dart';
 import '../utils/title_formatter.dart';
-import 'chapters_screen.dart';
+import '../utils/font_scale.dart';
+import 'chapters_screen.dart' as chapters;
 import 'sections_screen.dart';
 import '../widgets/fade_route.dart';
+import '../debug/debug_flags.dart';
+import '../debug/block_validator.dart';
+import 'questions_header.dart';
 
 class QuestionsScreen extends StatefulWidget {
   final String sectionTitle;
@@ -35,43 +39,226 @@ class QuestionsScreen extends StatefulWidget {
 
 class _QuestionsScreenState extends State<QuestionsScreen> {
   final ScrollController _scrollController = ScrollController();
-  final Map<int, GlobalKey> _blockKeys = {};
-  final Set<int> _questionBlockIds = {};
-  int? _activeBlockId;
+  final Map<int, BuildContext> _questionContexts = {};
+  List<_QuestionRow> _sortedQuestions = [];
+  int _currentQuestionIndex = 0;
+  bool _navIndexInitialized = false;
   bool _didAutoScroll = false;
-  List<_QuestionAnchor> _allAnchors = const [];
-  Map<int, _QuestionAnchor> _anchorByBlock = const {};
-  List<_ChapterAnchor> _chapterAnchors = const [];
-  List<_SectionAnchor> _sectionAnchors = const [];
 
   late final Future<_ChapterScreenData> _dataFuture = _loadData();
 
   Future<_ChapterScreenData> _loadData() async {
     final db = BrhcDatabase.instance;
-    final results = await Future.wait([
-      db.fetchChapterBlocks(
-        sectionTitle: widget.sectionTitle,
-        chapterTitle: widget.chapterTitle,
-      ),
-      db.fetchQuestionIndex(
-        sectionTitle: widget.sectionTitle,
-        chapterTitle: widget.chapterTitle,
-      ),
-      db.fetchAllQuestionAnchors(),
-    ]);
+    final rawQuestions = await _fetchQuestionRows();
+    final questions =
+        rawQuestions.where((q) => q.questionNumber > 0).toList();
+    _assertQuestionsOrdered(questions, widget.rawChapterTitle);
+    final answersByQuestion = <int, List<_AnswerBlock>>{
+      for (final q in questions) q.id: [],
+    };
+    final introBlocks = <_AnswerBlock>[];
+    final orphanBlocks = <_AnswerBlock>[];
+    var chapterBlocks = <_AnswerBlock>[];
 
-    return _ChapterScreenData(
-      blocks: results[0] as List<DocBlock>,
-      questions: results[1] as List<QuestionNavItem>,
-      anchors: results[2] as List<Map<String, Object?>>,
+    final chapterNumber = _parseChapterNumber(widget.rawChapterTitle);
+    if (chapterNumber != null) {
+      chapterBlocks = await _fetchChapterAnswerBlocks(chapterNumber);
+      final questionIds = questions.map((q) => q.id).toSet();
+      int? currentQuestionId;
+      for (final block in chapterBlocks) {
+        if (block.blockType == 'intro') {
+          introBlocks.add(block);
+          continue;
+        }
+        if (questionIds.contains(block.questionId)) {
+          currentQuestionId = block.questionId;
+        }
+        if (currentQuestionId == null) {
+          orphanBlocks.add(block);
+          continue;
+        }
+        answersByQuestion[currentQuestionId]!.add(block);
+      }
+    }
+    final prevChapter = await db.fetchPreviousChapter(
+      sectionTitle: widget.sectionTitle,
+      chapterTitle: widget.chapterTitle,
     );
+    final nextChapter = await db.fetchNextChapter(
+      sectionTitle: widget.sectionTitle,
+      chapterTitle: widget.chapterTitle,
+    );
+    return _ChapterScreenData(
+      questions: questions,
+      answersByQuestion: answersByQuestion,
+      chapterBlocks: chapterBlocks,
+      introBlocks: introBlocks,
+      orphanBlocks: orphanBlocks,
+      prevChapter: prevChapter,
+      nextChapter: nextChapter,
+    );
+  }
+
+  Future<List<_QuestionRow>> _fetchQuestionRows() async {
+    final db = await BrhcDatabase.instance.database;
+    final chapterNumber = _parseChapterNumber(widget.rawChapterTitle);
+    if (chapterNumber == null) {
+      return [];
+    }
+    final rows = await db.rawQuery(
+      '''
+      SELECT *
+      FROM questions
+      WHERE chapter_number = ?
+        AND id > 0
+      ORDER BY question_number ASC
+      ''',
+      [
+        chapterNumber,
+      ],
+    );
+    return rows
+        .map<_QuestionRow>(
+          (row) => _QuestionRow(
+            id: row['id'] as int? ?? 0,
+            questionNumber: row['question_number'] as int? ?? 0,
+            questionText: row['question_text'] as String? ?? '',
+          ),
+        )
+        .toList();
+  }
+
+  Future<List<_AnswerBlock>> _fetchAnswerBlocks(int questionId) async {
+    if (questionId == 0) {
+      return [];
+    }
+    final db = await BrhcDatabase.instance.database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT *
+      FROM answer_blocks
+      WHERE question_id = ?
+      ORDER BY block_order ASC
+      ''',
+      [questionId],
+    );
+    return rows
+        .map<_AnswerBlock>(
+          (row) {
+            final content = row['content'] as String? ?? '';
+            final hasStrong = content.contains('<strong>');
+            final hasEm = content.contains('<em>') || content.contains('<i>');
+            debugPrint(
+              '[DB_FETCH] id=${row['id']} type=${row['block_type']} '
+              'hasStrong=$hasStrong hasEm=$hasEm content="$content"',
+            );
+            return _AnswerBlock(
+              id: row['id'] as int? ?? 0,
+              questionId: row['question_id'] as int? ?? 0,
+              sequenceInQuestion: row['sequence_in_question'] as int? ?? 0,
+              blockType: row['block_type'] as String? ?? 'answer',
+              content: content,
+              reference: row['reference'] as String?,
+              imageRef: row['image_ref'],
+            );
+          },
+        )
+        .toList();
+  }
+
+  Future<List<_AnswerBlock>> _fetchChapterAnswerBlocks(int chapterNumber) async {
+    final db = await BrhcDatabase.instance.database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT ab.*
+      FROM answer_blocks ab
+      JOIN questions q ON q.id = ab.question_id
+      WHERE q.chapter_number = ?
+      ORDER BY ab.id ASC
+      ''',
+      [chapterNumber],
+    );
+    return rows
+        .map<_AnswerBlock>(
+          (row) => _AnswerBlock(
+            id: row['id'] as int? ?? 0,
+            questionId: row['question_id'] as int? ?? 0,
+            sequenceInQuestion: row['block_order'] as int? ?? 0,
+            blockType: row['block_type'] as String? ?? 'answer',
+            content: row['content'] as String? ?? '',
+            reference: row['reference'] as String?,
+            imageRef: row['image_ref'],
+          ),
+        )
+        .toList();
+  }
+
+  DocBlock _answerBlockToDocBlock(_AnswerBlock answer) {
+    final type = _mapAnswerBlockType(answer.blockType);
+    if (type == 'image') {
+      final ref = answer.imageRef?.toString().trim();
+      final token = ref == null || ref.isEmpty ? '' : '[Pic: $ref]';
+      return DocBlock(
+        blockId: answer.id,
+        blockType: 'image',
+        rawText: token,
+        normalizedText: token,
+        tableJson: null,
+        imageBlobs: const [],
+      );
+    }
+    final content = _mergeAnswerContent(answer.content, answer.reference);
+    return DocBlock(
+      blockId: answer.id,
+      blockType: type,
+      rawText: content,
+      normalizedText: _stripMarkersForDisplay(content),
+      tableJson: null,
+      imageBlobs: const [],
+    );
+  }
+
+  String _mapAnswerBlockType(String raw) {
+    switch (raw) {
+      case 'intro':
+        return 'intro';
+      case 'poetry':
+        return 'poetry';
+      case 'note':
+        return 'note';
+      case 'heading':
+        return 'heading';
+      case 'scripture':
+        return 'scripture';
+      case 'responsive':
+        return 'responsive';
+      case 'image':
+        return 'image';
+      case 'answer':
+        return 'answer';
+      default:
+        return 'text';
+    }
+  }
+
+  String _mergeAnswerContent(String content, String? reference) {
+    final trimmed = content.trim();
+    final ref = reference?.trim() ?? '';
+    if (ref.isEmpty) {
+      return trimmed;
+    }
+    if (trimmed.isEmpty) {
+      return ref;
+    }
+    if (trimmed.contains(ref)) {
+      return trimmed;
+    }
+    return '$trimmed $ref';
   }
 
   @override
   void initState() {
     super.initState();
-    _activeBlockId = widget.initialBlockId;
-    _scrollController.addListener(_handleScroll);
   }
 
   @override
@@ -85,42 +272,41 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
               return const Center(child: CircularProgressIndicator());
             }
             final data = snapshot.data;
-            final blocks = data?.blocks ?? [];
             final questions = data?.questions ?? [];
-            final anchors = data?.anchors ?? [];
-            final questionMap = {
-              for (final q in questions) q.blockId: q,
-            };
-            _questionBlockIds
-              ..clear()
-              ..addAll(questionMap.keys);
-            _blockKeys.clear();
-            _initializeAnchors(anchors);
-            final headerTitle = _buildChapterHeader(widget.rawChapterTitle);
-            final activeBlockId = _activeBlockId ??
-                (questions.isNotEmpty ? questions.first.blockId : null);
-            final activeAnchor =
-                activeBlockId == null ? null : _anchorByBlock[activeBlockId];
+            final answersByQuestion = data?.answersByQuestion ?? {};
+            final chapterBlocks = data?.chapterBlocks ?? [];
+            final introBlocks = data?.introBlocks ?? [];
+            final orphanBlocks = data?.orphanBlocks ?? [];
+            final prevChapter = data?.prevChapter;
+            final nextChapter = data?.nextChapter;
+            _sortedQuestions = questions;
+
+            if (!_navIndexInitialized) {
+              _currentQuestionIndex = _sortedQuestions.isNotEmpty ? 0 : -1;
+              _navIndexInitialized = true;
+            }
+
+            _questionContexts.clear();
+            
+            final hasQuestions = _sortedQuestions.isNotEmpty;
+            final currentQuestionNumber = hasQuestions
+                ? _sortedQuestions[_currentQuestionIndex].questionNumber
+                : 0;
 
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (_didAutoScroll) {
-                return;
-              }
-              final target = _initialQuestionBlockId();
-              if (target != null) {
+              if (_didAutoScroll) return;
+              if (_sortedQuestions.isNotEmpty) {
                 _didAutoScroll = true;
-                _scrollToBlock(target);
+                _scrollToQuestion(_sortedQuestions.first.id);
               }
             });
 
             return Column(
               children: [
-                _ChapterHeader(
-                  sectionTitle: _displaySectionTitle(
-                    (activeAnchor?.sectionTitle ?? widget.sectionTitle),
-                  ),
+                ChapterHeader(
+                  sectionTitle: _displaySectionTitle(widget.sectionTitle),
                   chapterTitle: _buildChapterHeader(
-                    (activeAnchor?.chapterTitle ?? widget.rawChapterTitle),
+                    widget.rawChapterTitle,
                   ),
                   onSectionTap: () {
                     Navigator.of(context).push(
@@ -129,32 +315,53 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                       ),
                     );
                   },
+                  onChapterTap: () {
+                    Navigator.of(context).push(
+                      FadeRoute(
+                        builder: (_) => ChaptersScreen(
+                          sectionTitle: widget.sectionTitle,
+                          displaySectionTitle: widget.displaySectionTitle,
+                        ),
+                      ),
+                    );
+                  },
                 ),
-                if (activeAnchor != null)
-                  _QuestionNavBar(
-                    currentNumber: activeAnchor.questionNumber,
-                    onPrevQuestion: () => _jumpToQuestion(previous: true),
-                    onNextQuestion: () => _jumpToQuestion(previous: false),
-                    onPrevChapter: () => _jumpToChapter(previous: true),
-                    onNextChapter: () => _jumpToChapter(previous: false),
-                  ),
+                QuestionNavBar(
+                  currentNumber: currentQuestionNumber,
+                  onPrevQuestion:
+                      (hasQuestions && _currentQuestionIndex > 0)
+                          ? () => _jumpToQuestion(previous: true)
+                          : null,
+                  onNextQuestion:
+                      (hasQuestions &&
+                              _currentQuestionIndex <
+                                  _sortedQuestions.length - 1)
+                          ? () => _jumpToQuestion(previous: false)
+                          : null,
+                  onPrevChapter: prevChapter == null
+                      ? null
+                      : () => _jumpToChapter(previous: true),
+                  onNextChapter: nextChapter == null
+                      ? null
+                      : () => _jumpToChapter(previous: false),
+                ),
                 Expanded(
-                  child: NotificationListener<UserScrollNotification>(
-                    onNotification: (notification) {
-                      if (notification.direction == ScrollDirection.idle) {
-                        _updateActiveBlockFromScroll();
-                      }
-                      return false;
-                    },
-                    child: ListView(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                      children: [
-                        for (var i = 0; i < blocks.length; i++) ...[
-                          _buildRenderItem(blocks[i], questionMap),
-                          if (i != blocks.length - 1) const Divider(height: 24),
-                        ]
-                      ],
+                  child: SingleChildScrollView(
+                    controller: _scrollController,
+                    padding: EdgeInsets.fromLTRB(
+                      20,
+                      0,
+                      20,
+                      16,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: _buildQuestionWidgets(
+                        answersByQuestion,
+                        chapterBlocks,
+                        introBlocks,
+                        orphanBlocks,
+                      ),
                     ),
                   ),
                 ),
@@ -192,10 +399,9 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
     );
   }
 
-  void _scrollToBlock(int blockId) {
+  void _scrollToQuestion(int questionId) {
     void attemptScroll(int remaining) {
-      final key = _blockKeys[blockId];
-      final context = key?.currentContext;
+      final context = _questionContexts[questionId];
       if (context == null) {
         if (remaining > 0) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -204,63 +410,117 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
         }
         return;
       }
-      if (_activeBlockId != blockId) {
-        setState(() {
-          _activeBlockId = blockId;
-        });
-      }
       Scrollable.ensureVisible(
         context,
         duration: const Duration(milliseconds: 350),
         curve: Curves.easeInOut,
+        alignment: 0.0,
       );
     }
 
     attemptScroll(6);
   }
 
-  void _handleScroll() {
-    // Keep for future scroll anchoring enhancements.
-  }
+  List<Widget> _buildQuestionWidgets(
+    Map<int, List<_AnswerBlock>> answersByQuestion,
+    List<_AnswerBlock> chapterBlocks,
+    List<_AnswerBlock> introBlocks,
+    List<_AnswerBlock> orphanBlocks,
+  ) {
+    final widgets = <Widget>[];
+    final questionsById = {
+      for (final q in _sortedQuestions) q.id: q,
+    };
+    final renderedQuestions = <int>{};
+    final answerCounts = <int, int>{};
+    final hasQuestions = questionsById.isNotEmpty;
 
-  void _updateActiveBlockFromScroll() {
-    for (final entry in _blockKeys.entries) {
-      final context = entry.value.currentContext;
-      if (context == null) {
-        continue;
+    for (final block in chapterBlocks) {
+      final docBlock = _answerBlockToDocBlock(block);
+      BlockValidator.validateBlock(docBlock); // Diagnostics only.
+      if (docBlock.blockType == 'intro') {
+        BlockValidator.validateIntroQuestionId(block.id, block.questionId);
       }
-      final box = context.findRenderObject() as RenderBox?;
-      if (box == null) {
-        continue;
-      }
-      final offset = box.localToGlobal(Offset.zero).dy;
-      if (offset >= 0 && _questionBlockIds.contains(entry.key)) {
-        if (_activeBlockId != entry.key) {
-          setState(() {
-            _activeBlockId = entry.key;
-          });
+      if (docBlock.blockType == 'answer') {
+        final question = questionsById[block.questionId];
+        if (question != null && renderedQuestions.add(question.id)) {
+          widgets.add(
+            KeyedSubtree(
+              key: ValueKey('question-${question.id}'),
+              child: Builder(
+                builder: (context) {
+                  _questionContexts[question.id] = context;
+                  return _QuestionBlock(question: question);
+                },
+              ),
+            ),
+          );
         }
-        break;
+        if (question != null) {
+          answerCounts[question.id] = (answerCounts[question.id] ?? 0) + 1;
+        } else if (DebugFlags.renderTrace && hasQuestions) {
+          widgets.add(
+            _debugIntegrityWarning(
+              context,
+              '⚠ Orphaned answer (no active question)',
+            ),
+          );
+        }
+      }
+      if (DebugFlags.poetryTrace && docBlock.blockType == 'poetry') {
+        debugPrint(
+          '[DEBUG] poetry block inside chapter flow (id=${block.questionId})',
+        );
+      }
+      widgets.add(
+        KeyedSubtree(
+          key: ValueKey('block-${block.id}'),
+          child: _AnswerBlockRenderer(
+            block: docBlock,
+          ),
+        ),
+      );
+    }
+
+    for (final question in _sortedQuestions) {
+      if (question.id <= 0) {
+        continue;
+      }
+      if (!renderedQuestions.contains(question.id)) {
+        widgets.add(
+          KeyedSubtree(
+            key: ValueKey('question-${question.id}'),
+            child: Builder(
+              builder: (context) {
+                _questionContexts[question.id] = context;
+                return _QuestionBlock(question: question);
+              },
+            ),
+          ),
+        );
+      }
+      final hasAnswers = (answerCounts[question.id] ?? 0) > 0;
+      BlockValidator.validateQuestion(question.id, hasAnswers);
+      if (DebugFlags.renderTrace && !hasAnswers) {
+        BlockValidator.logAnswerSkip(question.id);
+        widgets.add(
+          _debugIntegrityWarning(
+            context,
+            '⚠ No answers found for this question',
+          ),
+        );
+      }
+      if (renderedQuestions.contains(question.id)) {
+        widgets.add(
+          KeyedSubtree(
+            key: ValueKey('divider-question-${question.id}'),
+            child: const Divider(height: 24),
+          ),
+        );
       }
     }
-  }
 
-  Widget _buildRenderItem(
-    DocBlock block,
-    Map<int, QuestionNavItem> questionMap,
-  ) {
-    final key = _blockKeys.putIfAbsent(
-      block.blockId,
-      () => GlobalKey(),
-    );
-    final question = questionMap[block.blockId];
-    return Container(
-      key: key,
-      child: _BlockRenderer(
-        block: block,
-        question: question,
-      ),
-    );
+    return widgets;
   }
 
   String _buildChapterHeader(String rawTitle) {
@@ -279,144 +539,71 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
     return '${parsed.number}. ${parsed.title}';
   }
 
-  void _initializeAnchors(List<Map<String, Object?>> rows) {
-    if (_allAnchors.isNotEmpty || rows.isEmpty) {
-      return;
-    }
-    final anchors = <_QuestionAnchor>[];
-    for (final row in rows) {
-      final blockId = row['block_id'] as int?;
-      final questionNumber = row['question_number'] as int?;
-      final sectionTitle = row['section_title'] as String?;
-      final chapterTitle = row['chapter_title'] as String?;
-      if (blockId == null ||
-          questionNumber == null ||
-          sectionTitle == null ||
-          chapterTitle == null) {
-        continue;
+  void _assertQuestionsOrdered(
+    List<_QuestionRow> questions,
+    String rawChapterTitle,
+  ) {
+    var last = 0;
+    for (final question in questions) {
+      final current = question.questionNumber;
+      if (current < last) {
+        debugPrint(
+          '[RENDER] Question order error in "$rawChapterTitle": '
+          '$current after $last',
+        );
+        throw StateError('Question order error in $rawChapterTitle');
       }
-      anchors.add(
-        _QuestionAnchor(
-          blockId: blockId,
-          questionNumber: questionNumber,
-          sectionTitle: sectionTitle,
-          chapterTitle: chapterTitle,
-        ),
-      );
+      last = current;
     }
-    _allAnchors = anchors;
-    _anchorByBlock = {for (final a in anchors) a.blockId: a};
-    _chapterAnchors = _buildChapterAnchors(anchors);
-    _sectionAnchors = _buildSectionAnchors(anchors);
   }
 
-  int? _initialQuestionBlockId() {
-    if (_allAnchors.isEmpty) {
-      return null;
-    }
-    final match = _allAnchors.firstWhere(
-      (a) => a.chapterTitle == widget.chapterTitle,
-      orElse: () => _allAnchors.first,
-    );
-    return match.blockId;
-  }
 
   void _jumpToQuestion({required bool previous}) {
-    final index = _currentAnchorIndex();
-    if (index == null) {
+    if (_sortedQuestions.isEmpty) {
       return;
     }
-    final nextIndex = previous ? index - 1 : index + 1;
-    if (nextIndex < 0 || nextIndex >= _allAnchors.length) {
-      return;
+    int newIndex = _currentQuestionIndex;
+    if (previous) {
+      if (newIndex > 0) newIndex--;
+    } else {
+      if (newIndex < _sortedQuestions.length - 1) newIndex++;
     }
-    _scrollToBlock(_allAnchors[nextIndex].blockId);
+    if (newIndex != _currentQuestionIndex) {
+      setState(() {
+        _currentQuestionIndex = newIndex;
+      });
+      _scrollToQuestion(_sortedQuestions[newIndex].id);
+    }
   }
 
-  void _jumpToChapter({required bool previous}) {
-    final current = _currentAnchorIndex();
-    if (current == null || _chapterAnchors.isEmpty) {
-      return;
-    }
-    final currentChapterIndex =
-        _chapterAnchors.lastIndexWhere((c) => c.startIndex <= current);
-    if (currentChapterIndex == -1) {
-      return;
-    }
-    final targetIndex =
-        previous ? currentChapterIndex - 1 : currentChapterIndex + 1;
-    if (targetIndex < 0 || targetIndex >= _chapterAnchors.length) {
-      return;
-    }
-    final anchor = _allAnchors[_chapterAnchors[targetIndex].startIndex];
-    _navigateToAnchor(anchor, fromLeft: previous);
-  }
-
-  void _jumpToSection({required bool previous}) {
-    final current = _currentAnchorIndex();
-    if (current == null || _sectionAnchors.isEmpty) {
-      return;
-    }
-    final currentSectionIndex =
-        _sectionAnchors.lastIndexWhere((s) => s.startIndex <= current);
-    if (currentSectionIndex == -1) {
-      return;
-    }
-    final targetIndex =
-        previous ? currentSectionIndex - 1 : currentSectionIndex + 1;
-    if (targetIndex < 0 || targetIndex >= _sectionAnchors.length) {
-      return;
-    }
-    final anchor = _allAnchors[_sectionAnchors[targetIndex].startIndex];
-    _navigateToAnchor(anchor, fromLeft: previous);
-  }
-
-  int? _currentAnchorIndex() {
-    if (_allAnchors.isEmpty) {
+  int? _parseChapterNumber(String rawTitle) {
+    final parsed = TitleFormatter.parseChapterTitle(rawTitle);
+    final number = parsed.number;
+    if (number == null || number.isEmpty) {
       return null;
     }
-    final current = _activeBlockId ?? widget.initialBlockId;
-    if (current == null) {
-      return null;
-    }
-    final index = _allAnchors.lastIndexWhere((a) => a.blockId <= current);
-    return index == -1 ? null : index;
+    return int.tryParse(number);
   }
 
-  List<_ChapterAnchor> _buildChapterAnchors(List<_QuestionAnchor> anchors) {
-    final items = <_ChapterAnchor>[];
-    String? current;
-    for (var i = 0; i < anchors.length; i++) {
-      if (anchors[i].chapterTitle != current) {
-        current = anchors[i].chapterTitle;
-        items.add(_ChapterAnchor(chapterTitle: current, startIndex: i));
-      }
+
+  Future<void> _jumpToChapter({required bool previous}) async {
+    final db = BrhcDatabase.instance;
+    final target = previous
+        ? await db.fetchPreviousChapter(
+            sectionTitle: widget.sectionTitle,
+            chapterTitle: widget.chapterTitle,
+          )
+        : await db.fetchNextChapter(
+            sectionTitle: widget.sectionTitle,
+            chapterTitle: widget.chapterTitle,
+          );
+    if (!mounted || target == null) {
+      return;
     }
-    return items;
+    _navigateToChapter(target, fromLeft: previous);
   }
 
-  List<_SectionAnchor> _buildSectionAnchors(List<_QuestionAnchor> anchors) {
-    final items = <_SectionAnchor>[];
-    String? current;
-    for (var i = 0; i < anchors.length; i++) {
-      if (anchors[i].sectionTitle != current) {
-        current = anchors[i].sectionTitle;
-        items.add(_SectionAnchor(sectionTitle: current, startIndex: i));
-      }
-    }
-    return items;
-  }
-
-  void _navigateToAnchor(_QuestionAnchor anchor, {required bool fromLeft}) {
-    final entry = ChapterEntry(
-      sectionTitle: TitleFormatter.parseSectionTitle(anchor.sectionTitle).title,
-      chapterTitle: TitleFormatter.parseChapterTitle(anchor.chapterTitle).title,
-      rawSectionTitle: anchor.sectionTitle,
-      rawChapterTitle: anchor.chapterTitle,
-      firstBlockId: anchor.blockId,
-    );
-    _navigateToChapter(entry, fromLeft: fromLeft);
-  }
+  
 
   @override
   void dispose() {
@@ -426,121 +613,94 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
 }
 
 class _ChapterScreenData {
-  final List<DocBlock> blocks;
-  final List<QuestionNavItem> questions;
-  final List<Map<String, Object?>> anchors;
+  final List<_QuestionRow> questions;
+  final Map<int, List<_AnswerBlock>> answersByQuestion;
+  final List<_AnswerBlock> chapterBlocks;
+  final List<_AnswerBlock> introBlocks;
+  final List<_AnswerBlock> orphanBlocks;
+  final ChapterEntry? prevChapter;
+  final ChapterEntry? nextChapter;
 
   const _ChapterScreenData({
-    required this.blocks,
     required this.questions,
-    required this.anchors,
+    required this.answersByQuestion,
+    required this.chapterBlocks,
+    required this.introBlocks,
+    required this.orphanBlocks,
+    required this.prevChapter,
+    required this.nextChapter,
   });
 }
 
-class _QuestionAnchor {
-  final int blockId;
+class _QuestionRow {
+  final int id;
   final int questionNumber;
-  final String sectionTitle;
-  final String chapterTitle;
+  final String questionText;
 
-  const _QuestionAnchor({
-    required this.blockId,
+  const _QuestionRow({
+    required this.id,
     required this.questionNumber,
-    required this.sectionTitle,
-    required this.chapterTitle,
+    required this.questionText,
   });
 }
 
-class _ChapterAnchor {
-  final String chapterTitle;
-  final int startIndex;
+class _AnswerBlock {
+  final int id;
+  final int questionId;
+  final int sequenceInQuestion;
+  final String blockType;
+  final String content;
+  final String? reference;
+  final Object? imageRef;
+  final bool hasStrong;
+  final bool hasEm;
+  final bool hasI;
+  final bool hasU;
 
-  const _ChapterAnchor({required this.chapterTitle, required this.startIndex});
+  _AnswerBlock({
+    required this.id,
+    required this.questionId,
+    required this.sequenceInQuestion,
+    required this.blockType,
+    required this.content,
+    required this.reference,
+    required this.imageRef,
+  })  : hasStrong = _hasStrongInContent(content),
+        hasEm = content.contains('<em>'),
+        hasI = content.contains('<i>'),
+        hasU = content.contains('<u>') {
+    debugPrint(
+      '[MODEL] id=$id type=$blockType hasStrong=$hasStrong hasEm=$hasEm '
+      'hasI=$hasI hasU=$hasU content="$content"',
+    );
+  }
 }
 
-class _SectionAnchor {
-  final String sectionTitle;
-  final int startIndex;
-
-  const _SectionAnchor({required this.sectionTitle, required this.startIndex});
+bool _hasStrongInContent(String content) {
+  return content.contains('<strong>');
 }
 
-class _BlockRenderer extends StatelessWidget {
-  final DocBlock block;
-  final QuestionNavItem? question;
+class _QuestionBlock extends StatelessWidget {
+  final _QuestionRow question;
 
-  const _BlockRenderer({
-    required this.block,
+  const _QuestionBlock({
     required this.question,
   });
 
   @override
   Widget build(BuildContext context) {
-    switch (block.blockType) {
-      case 'section':
-      case 'chapter':
-        return block.imageBlobs.isEmpty
-            ? const SizedBox.shrink()
-            : _BlockImages(block.imageBlobs);
-      case 'question':
-        return _QuestionBlock(block: block, question: question);
-      case 'note':
-        return _NoteBlock(block: block);
-      case 'note_heading':
-        return _NoteBlock(block: block, isHeading: true);
-      case 'title_ref':
-        return _TitleRefBlock(block: block);
-      case 'poetry':
-        return _PoetryBlock(block: block);
-      case 'table':
-        return _TableBlock(block: block);
-      case 'reading':
-        return _ReadingBlock(block: block);
-      case 'image':
-        final filename = _extractPicFilename(
-          block.rawText.isNotEmpty ? block.rawText : block.normalizedText,
-        );
-        if (filename == null) {
-          return const SizedBox.shrink();
-        }
-        return Padding(
-          padding: const EdgeInsets.only(top: 12, bottom: 12),
-          child: _InlineImageByFilename(filename: filename),
-        );
-      case 'text':
-      default:
-        return _TextBlock(block: block);
-    }
-  }
-}
-
-class _QuestionBlock extends StatelessWidget {
-  final DocBlock block;
-  final QuestionNavItem? question;
-
-  const _QuestionBlock({required this.block, required this.question});
-
-  @override
-  Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final number = question?.questionNumber;
-    final rawText =
-        block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
-    final text = _stripMarkersForDisplay(
-      !_containsMarkup(rawText) && _containsMarkup(block.normalizedText)
-          ? block.normalizedText
-          : rawText,
-    );
-    final baseStyle = theme.textTheme.bodyMedium;
-    final width = MediaQuery.of(context).size.width;
-    final fontSize = (baseStyle?.fontSize ?? 16) -
-        (width < 340 ? 3 : width < 380 ? 2 : 0);
-    final hasHtml = _containsMarkup(text);
-    final questionStyle = baseStyle?.copyWith(
+    final scale = _fontScale(context);
+    final displayText = question.questionText;
+    final baseStyle = theme.textTheme.bodyMedium ?? const TextStyle();
+    final scaledBaseStyle = _scaleStyle(baseStyle, scale) ?? baseStyle;
+    final hasHtml = _containsMarkup(displayText);
+
+    final displayNumber = question.questionNumber;
+    final questionStyle = scaledBaseStyle.copyWith(
       fontWeight: FontWeight.w600,
       height: 1.4,
       color: const Color(0xFF0000FF),
-      fontSize: fontSize,
     );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -548,53 +708,201 @@ class _QuestionBlock extends StatelessWidget {
         hasHtml
             ? RichText(
                 text: TextSpan(
+                  style: questionStyle,
                   children: [
-                    if (number != null)
-                      TextSpan(text: '$number. ', style: questionStyle),
+                    TextSpan(
+                      text: '$displayNumber. ',
+                      style: questionStyle,
+                    ),
                     _renderInlineHtml(
-                      text,
+                      displayText,
                       questionStyle,
                     ),
                   ],
                 ),
               )
             : Text(
-                number == null ? text : '$number. $text',
+                '$displayNumber. $displayText',
                 softWrap: true,
                 style: questionStyle,
               ),
-        _BlockImages(block.imageBlobs),
       ],
     );
   }
 }
 
-class _TextBlock extends StatelessWidget {
+class _AnswerBlockRenderer extends StatelessWidget {
   final DocBlock block;
 
-  const _TextBlock({required this.block});
+  const _AnswerBlockRenderer({required this.block});
+
+  @override
+  Widget build(BuildContext context) {
+    final renderSource =
+        block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
+    final hasStrong = renderSource.contains('<strong>');
+    final hasEm =
+        renderSource.contains('<em>') || renderSource.contains('<i>');
+    final htmlAware = _containsMarkup(renderSource);
+    debugPrint(
+      '[RENDER_SELECT] blockType=${block.blockType} htmlAware=$htmlAware '
+      'hasStrong=$hasStrong hasEm=$hasEm',
+    );
+    return renderBlockByType(block);
+  }
+}
+
+Widget renderBlockByType(DocBlock block) {
+  final renderSource =
+      block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
+  if (block.blockType == 'heading' && !renderSource.contains('<strong>')) {
+    throw StateError('Heading missing <strong> (id=${block.blockId})');
+  }
+  switch (block.blockType) {
+    case 'note':
+      return _NoteBlock(block: block);
+    case 'note_heading':
+      return _NoteBlock(block: block, isHeading: true);
+    case 'title_ref':
+      return _TitleRefBlock(block: block);
+    case 'intro':
+      return _IntroBlock(block: block);
+    case 'poetry':
+      return _PoetryBlock(block: block);
+    case 'table':
+      return _TableBlock(block: block);
+    case 'responsive':
+    case 'reading':
+      return _ReadingBlock(block: block);
+    case 'image':
+      final filename = _extractPicFilename(renderSource);
+      if (filename == null) {
+        return const SizedBox.shrink();
+      }
+      final imageId = int.tryParse(filename);
+      if (imageId == null) {
+        return const SizedBox.shrink();
+      }
+      return Padding(
+        padding: const EdgeInsets.only(top: 12, bottom: 12),
+        child: _InlineImageById(
+          key: ValueKey('image-block-${block.blockId}-id-$imageId'),
+          imageId: imageId,
+        ),
+      );
+    case 'scripture':
+      return _TextBlock(block: block, isScripture: true);
+    case 'heading':
+      return _TextBlock(
+        block: block,
+        isHeading: true,
+        textAlign: TextAlign.center,
+        // Force HTML-aware rendering so <strong> applies in headings.
+        forceHtml: true,
+      );
+    case 'answer':
+    case 'text':
+    default:
+      return _TextBlock(block: block);
+  }
+}
+
+class _TextBlock extends StatelessWidget {
+  final DocBlock block;
+  final bool isScripture;
+  final bool isHeading;
+  final TextAlign textAlign;
+  final bool forceHtml;
+
+  const _TextBlock({
+    required this.block,
+    this.isScripture = false,
+    this.isHeading = false,
+    this.textAlign = TextAlign.start,
+    this.forceHtml = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final rawText =
+    final scale = _fontScale(context);
+    final renderSource =
         block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
-    final text = _stripMarkersForDisplay(
-      !_containsMarkup(rawText) && _containsMarkup(block.normalizedText)
-          ? block.normalizedText
-          : rawText,
+    final hasStrong = renderSource.contains('<strong>');
+    final hasEm =
+        renderSource.contains('<em>') || renderSource.contains('<i>');
+    debugPrint(
+      '[RENDER_INPUT] widget=_TextBlock id=${block.blockId} '
+      'hasStrong=$hasStrong hasEm=$hasEm',
     );
-    final style = theme.textTheme.bodyMedium?.copyWith(
+    debugPrint(
+      '[RENDER_WIDGET] using ${_containsMarkup(renderSource) ? 'RichText' : 'Text'} '
+      'htmlAware=${_containsMarkup(renderSource)}',
+    );
+    final text = _stripMarkersForDisplay(renderSource);
+    debugPrint(
+      '[RENDER_INPUT] widget=_TextBlock id=${block.blockId} '
+      'hasStrong=$hasStrong hasEm=$hasEm text="$text"',
+    );
+    var style = _scaleStyle(theme.textTheme.bodyMedium, scale)?.copyWith(
       height: 1.5,
       color: const Color(0xFF1F1B17),
     );
-    final widgets = _buildInlineWidgets(context, text, style);
-    return Column(
+    if (isScripture) {
+      style = style?.copyWith(
+        fontStyle: FontStyle.italic,
+        color: theme.colorScheme.onSurfaceVariant,
+      );
+    }
+    if (isHeading) {
+      debugPrint('[RENDER_OVERRIDE] heading bold forced id=${block.blockId}');
+      final baseSize = style?.fontSize ?? 14;
+      style = style?.copyWith(
+        fontWeight: _containsMarkup(renderSource)
+            ? style?.fontWeight
+            : FontWeight.w700,
+        fontSize: baseSize * 1.15,
+      );
+    }
+    debugPrint(
+      '[RENDER_STYLE] widget=_TextBlock id=${block.blockId} '
+      'fontWeight=${style?.fontWeight} fontStyle=${style?.fontStyle}',
+    );
+    final widgets = _buildInlineWidgets(
+      context,
+      text,
+      style,
+      textAlign: textAlign,
+      forceHtml: forceHtml || isHeading,
+    );
+    final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         ...widgets,
         _BlockImages(block.imageBlobs),
       ],
+    );
+    if (isHeading) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: content,
+      );
+    }
+    return content;
+  }
+}
+
+class _IntroBlock extends StatelessWidget {
+  final DocBlock block;
+
+  const _IntroBlock({required this.block});
+
+  @override
+  Widget build(BuildContext context) {
+    return _TextBlock(
+      block: block,
+      textAlign: TextAlign.start,
+      forceHtml: true,
     );
   }
 }
@@ -608,14 +916,18 @@ class _NoteBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final rawText =
+    final scale = _fontScale(context);
+    final renderSource =
         block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
-    final text = _stripMarkersForDisplay(
-      !_containsMarkup(rawText) && _containsMarkup(block.normalizedText)
-          ? block.normalizedText
-          : rawText,
+    final hasEm =
+        renderSource.contains('<em>') || renderSource.contains('<i>');
+    final hasLineMarker =
+        RegExp(r'\[L\d+\]').hasMatch(renderSource);
+    debugPrint(
+      '[RESP_TRACE] id=${block.blockId} hasEm=$hasEm hasLineMarker=$hasLineMarker',
     );
-    final style = theme.textTheme.bodyMedium?.copyWith(
+    final text = _stripMarkersForDisplay(renderSource);
+    final style = _scaleStyle(theme.textTheme.bodyMedium, scale)?.copyWith(
       height: 1.5,
       fontWeight: isHeading ? FontWeight.w700 : FontWeight.w400,
       color: const Color(0xFF1F1B17),
@@ -647,31 +959,25 @@ class _PoetryBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final rawText =
+    final scale = _fontScale(context);
+    final renderSource =
         block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
-    final text = _stripMarkersForDisplay(
-      !_containsMarkup(rawText) && _containsMarkup(block.normalizedText)
-          ? block.normalizedText
-          : rawText,
-    );
-    final style = theme.textTheme.bodyMedium?.copyWith(
-      fontStyle: FontStyle.italic,
+    final text = _stripMarkersForDisplay(renderSource);
+    final style = _scaleStyle(theme.textTheme.bodyMedium, scale)?.copyWith(
       height: 1.5,
-      fontSize: (theme.textTheme.bodyMedium?.fontSize ?? 14) - 1,
       color: const Color(0xFF1F1B17),
     );
-    final widgets = _buildInlineWidgets(context, text, style);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ...widgets.map(
-          (widget) => Align(
-            alignment: Alignment.center,
-            child: widget,
-          ),
-        ),
-        _BlockImages(block.imageBlobs),
-      ],
+    final widgets =
+        _buildInlineWidgets(context, text, style, textAlign: TextAlign.center);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          ...widgets,
+          _BlockImages(block.imageBlobs),
+        ],
+      ),
     );
   }
 }
@@ -684,14 +990,11 @@ class _ReadingBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final rawText =
+    final scale = _fontScale(context);
+    final renderSource =
         block.rawText.isNotEmpty ? block.rawText : block.normalizedText;
-    final text = _stripMarkersForDisplay(
-      !_containsMarkup(rawText) && _containsMarkup(block.normalizedText)
-          ? block.normalizedText
-          : rawText,
-    );
-    final style = theme.textTheme.bodyMedium?.copyWith(
+    final text = _stripMarkersForDisplay(renderSource);
+    final style = _scaleStyle(theme.textTheme.bodyMedium, scale)?.copyWith(
       height: 1.5,
       color: const Color(0xFF1F1B17),
     );
@@ -722,6 +1025,7 @@ class _TableBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scale = _fontScale(context);
     final rows = _parseTable(block.tableJson);
     if (rows.isEmpty) {
       return _TextBlock(block: block);
@@ -743,7 +1047,8 @@ class _TableBlock extends StatelessWidget {
                           padding: const EdgeInsets.all(8),
                           child: Text(
                             cell,
-                            style: theme.textTheme.bodySmall?.copyWith(
+                            style: _scaleStyle(theme.textTheme.bodySmall, scale)
+                                ?.copyWith(
                               height: 1.4,
                               color: const Color(0xFF1F1B17),
                             ),
@@ -798,6 +1103,7 @@ class _TitleRefBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scale = _fontScale(context);
     String left = '';
     String right = '';
     if (block.tableJson != null && block.tableJson!.trim().isNotEmpty) {
@@ -821,7 +1127,9 @@ class _TitleRefBlock extends StatelessWidget {
     right = _stripMarkersForDisplay(right);
     final leftHasHtml = _containsMarkup(left);
     final rightHasHtml = _containsMarkup(right);
-    final style = theme.textTheme.bodyMedium?.copyWith(height: 1.4);
+    final style = _scaleStyle(theme.textTheme.bodyMedium, scale)?.copyWith(
+      height: 1.4,
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: LayoutBuilder(
@@ -890,9 +1198,10 @@ class _DotLeaderPainter extends CustomPainter {
 class _InlinePiece {
   final String? text;
   final String? filename;
+  final int offset;
 
-  const _InlinePiece.text(this.text) : filename = null;
-  const _InlinePiece.image(this.filename) : text = null;
+  const _InlinePiece.text(this.text, this.offset) : filename = null;
+  const _InlinePiece.image(this.filename, this.offset) : text = null;
 }
 
 final RegExp _picTagRegex =
@@ -907,47 +1216,87 @@ String? _extractPicFilename(String text) {
 List<_InlinePiece> _splitTextByPicTags(String text) {
   final matches = _picTagRegex.allMatches(text).toList();
   if (matches.isEmpty) {
-    return [_InlinePiece.text(text)];
+    return [_InlinePiece.text(text, 0)];
   }
   final pieces = <_InlinePiece>[];
   var index = 0;
   for (final match in matches) {
     if (match.start > index) {
-      pieces.add(_InlinePiece.text(text.substring(index, match.start)));
+      pieces.add(
+        _InlinePiece.text(text.substring(index, match.start), index),
+      );
     }
     final filename = match.group(1)?.trim();
     if (filename != null && filename.isNotEmpty) {
-      pieces.add(_InlinePiece.image(filename));
+      pieces.add(_InlinePiece.image(filename, match.start));
     }
     index = match.end;
   }
   if (index < text.length) {
-    pieces.add(_InlinePiece.text(text.substring(index)));
+    pieces.add(_InlinePiece.text(text.substring(index), index));
   }
   return pieces;
+}
+
+Widget _debugIntegrityWarning(BuildContext context, String text) {
+  final style = Theme.of(context).textTheme.bodySmall?.copyWith(
+        color: Colors.red,
+        fontSize: 12,
+      );
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Text(text, style: style),
+  );
 }
 
 List<Widget> _buildInlineWidgets(
   BuildContext context,
   String text,
-  TextStyle? style,
-) {
+  TextStyle? style, {
+  TextAlign? textAlign,
+  bool forceHtml = false,
+}) {
   final pieces = _splitTextByPicTags(text);
   final widgets = <Widget>[];
-  for (final piece in pieces) {
+  for (var index = 0; index < pieces.length; index++) {
+    final piece = pieces[index];
     if (piece.text != null && piece.text!.isNotEmpty) {
       final segment = piece.text!;
-      if (_containsMarkup(segment)) {
-        widgets.add(RichText(text: _renderInlineHtml(segment, style)));
+      if (forceHtml || _containsMarkup(segment)) {
+        widgets.add(
+          RichText(
+            text: _renderInlineHtml(segment, style),
+            textAlign: textAlign ?? TextAlign.start,
+          ),
+        );
       } else {
-        widgets.add(Text(segment, softWrap: true, style: style));
+        widgets.add(
+          Text(
+            segment,
+            softWrap: true,
+            textAlign: textAlign,
+            style: style,
+          ),
+        );
       }
     } else if (piece.filename != null && piece.filename!.isNotEmpty) {
-      widgets.add(_InlineImageByFilename(filename: piece.filename!));
+      widgets.add(
+        _InlineImageByFilename(
+          key: ValueKey('inline-img-${piece.filename}-${piece.offset}'),
+          filename: piece.filename!,
+        ),
+      );
     }
   }
   if (widgets.isEmpty) {
-    widgets.add(Text(text, softWrap: true, style: style));
+    widgets.add(
+      Text(
+        text,
+        softWrap: true,
+        textAlign: textAlign,
+        style: style,
+      ),
+    );
   }
   return widgets;
 }
@@ -955,7 +1304,7 @@ List<Widget> _buildInlineWidgets(
 class _InlineImageByFilename extends StatelessWidget {
   final String filename;
 
-  const _InlineImageByFilename({required this.filename});
+  const _InlineImageByFilename({super.key, required this.filename});
 
   @override
   Widget build(BuildContext context) {
@@ -989,8 +1338,12 @@ class _InlineImageByFilename extends StatelessWidget {
               },
             );
             if (constraints.maxWidth < 600) {
+              final viewerKey = key is ValueKey
+                  ? (key as ValueKey).value.toString()
+                  : filename;
               return ClipRect(
                 child: InteractiveViewer(
+                  key: ValueKey('img-file-$viewerKey'),
                   minScale: 1.0,
                   maxScale: 4.0,
                   child: image,
@@ -1005,8 +1358,77 @@ class _InlineImageByFilename extends StatelessWidget {
   }
 }
 
+class _InlineImageById extends StatelessWidget {
+  final int imageId;
+
+  const _InlineImageById({super.key, required this.imageId});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Uint8List?>(
+      future: _fetchImageBlobById(imageId),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SizedBox(height: 12);
+        }
+        final blob = snapshot.data;
+        if (blob == null) {
+          if (_missingPicLog.add('id:$imageId')) {
+            debugPrint('Missing image for [Pic] id: $imageId');
+          }
+          return const SizedBox.shrink();
+        }
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final image = Image.memory(
+              blob,
+              width: constraints.maxWidth,
+              fit: BoxFit.fitWidth,
+              gaplessPlayback: true,
+              errorBuilder: (context, error, stackTrace) {
+                return Text(
+                  'Image decode failed',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                );
+              },
+            );
+            if (constraints.maxWidth < 600) {
+              final viewerKey =
+                  key is ValueKey ? (key as ValueKey).value.toString() : '$imageId';
+              return ClipRect(
+                child: InteractiveViewer(
+                  key: ValueKey('img-id-$viewerKey'),
+                  minScale: 1.0,
+                  maxScale: 4.0,
+                  child: image,
+                ),
+              );
+            }
+            return image;
+          },
+        );
+      },
+    );
+  }
+
+  Future<Uint8List?> _fetchImageBlobById(int id) async {
+    final db = await BrhcDatabase.instance.database;
+    final rows = await db.rawQuery(
+      'SELECT image_blob FROM brhc_images WHERE image_id = ? LIMIT 1',
+      [id],
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    final blob = rows.first['image_blob'];
+    return blob is Uint8List ? blob : null;
+  }
+}
+
 bool _containsMarkup(String text) {
-  return RegExp(r'<\s*/?\s*(strong|em|b|i)\s*>', caseSensitive: false)
+  return RegExp(r'<\s*/?\s*(strong|em|i|u|br)\s*/?\s*>', caseSensitive: false)
       .hasMatch(text);
 }
 
@@ -1023,11 +1445,18 @@ String _stripMarkersForDisplay(String text) {
 TextSpan _renderInlineHtml(String text, TextStyle? baseStyle) {
   final normalized = text
       .replaceAll(RegExp(r'<\s*br\s*/?>', caseSensitive: false), '\n')
-      .replaceAll(RegExp(r'<\s*/?p\s*>', caseSensitive: false), '\n\n');
+      .replaceAll(
+        RegExp(
+          r'<\s*/?\s*(?!strong|em|i|u|br)\w+[^>]*>',
+          caseSensitive: false,
+        ),
+        '',
+      );
   final spans = <TextSpan>[];
   var buffer = StringBuffer();
-  var bold = false;
-  var italic = false;
+  var boldDepth = 0;
+  var italicDepth = 0;
+  var underlineDepth = 0;
 
   void flush() {
     if (buffer.isEmpty) {
@@ -1037,25 +1466,36 @@ TextSpan _renderInlineHtml(String text, TextStyle? baseStyle) {
       TextSpan(
         text: buffer.toString(),
         style: baseStyle?.copyWith(
-          fontWeight: bold ? FontWeight.w700 : baseStyle?.fontWeight,
-          fontStyle: italic ? FontStyle.italic : baseStyle?.fontStyle,
+          fontWeight: boldDepth > 0 ? FontWeight.w700 : baseStyle?.fontWeight,
+          fontStyle: italicDepth > 0 ? FontStyle.italic : baseStyle?.fontStyle,
+          decoration:
+              underlineDepth > 0 ? TextDecoration.underline : baseStyle?.decoration,
         ),
       ),
     );
     buffer.clear();
   }
 
-  final tagRegex = RegExp(r'<\/?(strong|b|em|i)>', caseSensitive: false);
+  final tagRegex = RegExp(r'<\s*/?\s*(strong|em|i|u)\s*>', caseSensitive: false);
   var index = 0;
   for (final match in tagRegex.allMatches(normalized)) {
     buffer.write(normalized.substring(index, match.start));
     flush();
     final tag = match.group(1)?.toLowerCase() ?? '';
-    final isClosing = normalized.substring(match.start + 1).startsWith('/');
-    if (tag == 'strong' || tag == 'b') {
-      bold = !isClosing;
+    final token = match.group(0) ?? '';
+    final isClosing = RegExp(r'^<\s*/').hasMatch(token);
+    if (tag == 'strong') {
+      boldDepth = isClosing
+          ? (boldDepth - 1).clamp(0, 1000).toInt()
+          : boldDepth + 1;
     } else if (tag == 'em' || tag == 'i') {
-      italic = !isClosing;
+      italicDepth = isClosing
+          ? (italicDepth - 1).clamp(0, 1000).toInt()
+          : italicDepth + 1;
+    } else if (tag == 'u') {
+      underlineDepth = isClosing
+          ? (underlineDepth - 1).clamp(0, 1000).toInt()
+          : underlineDepth + 1;
     }
     index = match.end;
   }
@@ -1081,12 +1521,13 @@ class _BlockImages extends StatelessWidget {
           padding: const EdgeInsets.only(top: 12),
           child: Column(
             children: images
-                .asMap()
-                .entries
                 .map(
-                  (entry) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Column(
+                  (imageBytes) {
+                    final imageKey = _imageBytesKey(imageBytes);
+                    return Padding(
+                      key: ValueKey('block-image-$imageKey'),
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Align(
@@ -1098,7 +1539,7 @@ class _BlockImages extends StatelessWidget {
                             child: Builder(
                               builder: (context) {
                                 final image = Image.memory(
-                                  entry.value,
+                                  imageBytes,
                                   width: constraints.maxWidth,
                                   fit: BoxFit.fitWidth,
                                   gaplessPlayback: true,
@@ -1119,6 +1560,7 @@ class _BlockImages extends StatelessWidget {
                                 if (constraints.maxWidth < 600) {
                                   return ClipRect(
                                     child: InteractiveViewer(
+                                      key: ValueKey('block-image-iv-$imageKey'),
                                       minScale: 1.0,
                                       maxScale: 4.0,
                                       child: image,
@@ -1132,7 +1574,8 @@ class _BlockImages extends StatelessWidget {
                         ),
                       ],
                     ),
-                  ),
+                  );
+                },
                 )
                 .toList(),
           ),
@@ -1142,74 +1585,57 @@ class _BlockImages extends StatelessWidget {
   }
 }
 
-class _QuestionNavBar extends StatelessWidget {
-  final int currentNumber;
-  final VoidCallback onPrevQuestion;
-  final VoidCallback onNextQuestion;
-  final VoidCallback onPrevChapter;
-  final VoidCallback onNextChapter;
+String _imageBytesKey(Uint8List bytes) {
+  var hash = 0;
+  for (var i = 0; i < bytes.length; i += 64) {
+    hash = (hash * 31 + bytes[i]) & 0x7fffffff;
+  }
+  return '${bytes.length}-$hash';
+}
 
-  const _QuestionNavBar({
-    required this.currentNumber,
-    required this.onPrevQuestion,
-    required this.onNextQuestion,
-    required this.onPrevChapter,
-    required this.onNextChapter,
+double _fontScale(BuildContext context) {
+  return FontScaleScope.maybeOf(context)?.scale ?? 1.0;
+}
+
+TextStyle? _scaleStyle(TextStyle? style, double scale) {
+  final fontSize = style?.fontSize;
+  if (fontSize == null) return style;
+  return style!.copyWith(fontSize: fontSize * scale);
+}
+
+extension _ChapterLookup on BrhcDatabase {
+  Future<List<ChapterEntry>> fetchChaptersForSection({
+    required String sectionTitle,
+  }) {
+    return fetchChapters(sectionTitle);
+  }
+}
+
+class FadeRoute<T> extends PageRouteBuilder<T> {
+  FadeRoute({required WidgetBuilder builder})
+      : super(
+          pageBuilder: (context, animation, secondaryAnimation) {
+            return builder(context);
+          },
+          transitionsBuilder: (_, animation, __, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+        );
+}
+
+class ChaptersScreen extends StatelessWidget {
+  final String sectionTitle;
+  final String displaySectionTitle;
+
+  const ChaptersScreen({
+    super.key,
+    required this.sectionTitle,
+    required this.displaySectionTitle,
   });
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final buttonStyle = TextButton.styleFrom(
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      visualDensity: VisualDensity.compact,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(
-          color: theme.colorScheme.primary.withOpacity(0.35),
-        ),
-      ),
-    );
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          TextButton(
-            onPressed: onPrevChapter,
-            style: buttonStyle,
-            child: const Text('<<'),
-          ),
-          const SizedBox(width: 6),
-          TextButton(
-            onPressed: onPrevQuestion,
-            style: buttonStyle,
-            child: const Text('<'),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            '$currentNumber',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.2,
-            ),
-          ),
-          const SizedBox(width: 10),
-          TextButton(
-            onPressed: onNextQuestion,
-            style: buttonStyle,
-            child: const Text('>'),
-          ),
-          const SizedBox(width: 6),
-          TextButton(
-            onPressed: onNextChapter,
-            style: buttonStyle,
-            child: const Text('>>'),
-          ),
-        ],
-      ),
-    );
+    return chapters.ChaptersScreen(sectionTitle: sectionTitle);
   }
 }
 
@@ -1231,6 +1657,7 @@ class _ChapterNavRow extends StatelessWidget {
       child: Row(
         children: [
           IconButton(
+            key: const ValueKey('chapter-nav-prev'),
             onPressed: onPrevious,
             icon: const Icon(Icons.arrow_back_ios_new),
             iconSize: 18,
@@ -1238,62 +1665,11 @@ class _ChapterNavRow extends StatelessWidget {
           ),
           const Spacer(),
           IconButton(
+            key: const ValueKey('chapter-nav-next'),
             onPressed: onNext,
             icon: const Icon(Icons.arrow_forward_ios),
             iconSize: 18,
             color: theme.colorScheme.onSurface.withOpacity(0.7),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ChapterHeader extends StatelessWidget {
-  final String sectionTitle;
-  final String chapterTitle;
-  final VoidCallback? onSectionTap;
-
-  const _ChapterHeader({
-    required this.sectionTitle,
-    required this.chapterTitle,
-    this.onSectionTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final width = MediaQuery.of(context).size.width;
-    final titleSize = (theme.textTheme.titleMedium?.fontSize ?? 18) -
-        (width < 340 ? 2 : width < 380 ? 1 : 0);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 2, 20, 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          GestureDetector(
-            onTap: onSectionTap,
-            child: Text(
-              sectionTitle,
-              softWrap: true,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.titleSmall?.copyWith(
-                color: theme.colorScheme.onSurface.withOpacity(0.75),
-                fontWeight: FontWeight.w400,
-                letterSpacing: 0.2,
-              ),
-            ),
-          ),
-          const SizedBox(height: 1),
-          Text(
-            chapterTitle,
-            softWrap: true,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.2,
-              fontSize: titleSize + 1,
-            ),
           ),
         ],
       ),
