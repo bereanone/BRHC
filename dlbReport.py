@@ -38,19 +38,17 @@ def run_verification():
     print("\n[ORPHAN CHECK]")
     orphan_blocks = scalar(cur, """
         SELECT COUNT(*)
-        FROM answer_blocks ab
-        LEFT JOIN questions q ON q.id = ab.question_id
-        WHERE q.id IS NULL
+        FROM answer_blocks
+        WHERE chapter_id IS NULL
     """)
-    print(" Orphan blocks:", orphan_blocks)
+    print(" Blocks missing chapter_id:", orphan_blocks)
 
     print("\n[CHAPTER ATTACHMENT CHECK]")
     cur.execute("""
-        SELECT q.chapter_number, COUNT(ab.id)
-        FROM questions q
-        LEFT JOIN answer_blocks ab ON ab.question_id = q.id
-        GROUP BY q.chapter_number
-        ORDER BY q.chapter_number
+        SELECT chapter_id, COUNT(*)
+        FROM answer_blocks
+        GROUP BY chapter_id
+        ORDER BY chapter_id
         LIMIT 10
     """)
     rows = cur.fetchall()
@@ -87,12 +85,10 @@ def run_verification():
     print("\n[GLOBAL INTRO ANCHOR CHECK]")
     global_anchor = scalar(cur, """
         SELECT COUNT(*)
-        FROM questions
-        WHERE section_number=0
-          AND chapter_number=0
-          AND question_number=0
+        FROM answer_blocks
+        WHERE chapter_id = 0
     """)
-    print(" Global intro anchor questions:", global_anchor)
+    print(" Global intro blocks (chapter 0):", global_anchor)
 
     print("\n[RESPONSIVE BLOCK CHECK]")
     responsive_blocks = scalar(cur, """

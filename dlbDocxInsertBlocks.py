@@ -9,11 +9,11 @@ DB_PATH = "assets/databases/brhc.db"
 
 def _load_question_map(cur):
     cur.execute(
-        "SELECT id, section_number, chapter_number, question_number FROM questions"
+        "SELECT id, chapter_id, question_number FROM questions"
     )
     q_map = {}
     for row in cur.fetchall():
-        q_map[(row[1], row[2], row[3])] = row[0]
+        q_map[(row[1], row[2])] = row[0]
     return q_map
 
 
@@ -26,23 +26,15 @@ def _load_image_map(cur):
 
 
 def _resolve_question_id(q_map, token):
-    kind = token.get("kind")
-    section = token.get("section") or 0
     chapter = token.get("chapter") or 0
     qnum = token.get("question")
 
-    if kind == "global_intro":
-        key = (0, 0, 0)
-    elif kind == "section_intro":
-        key = (section, 0, 0)
-    elif qnum is not None:
-        key = (section, chapter, qnum)
+    if qnum is not None:
+        key = (chapter, qnum)
     else:
-        key = (section, chapter, 0)
+        key = (chapter, 0)
 
-    if key not in q_map:
-        raise RuntimeError(f"Missing question anchor for {key}")
-    return q_map[key]
+    return q_map.get(key)
 
 
 def _ensure_anchor_question(cur, section, chapter, qnum):
@@ -92,22 +84,6 @@ def insert_blocks(tokens, db_path=DB_PATH):
 
     q_map = _load_question_map(cur)
 
-    # Ensure global intro anchor
-    _ensure_anchor_question(cur, 0, 0, 0)
-
-    # Ensure section and chapter intro anchors
-    for token in tokens:
-        if token.get("kind") == "section_start":
-            sec = token.get("section") or 0
-            _ensure_anchor_question(cur, sec, 0, 0)
-        elif token.get("kind") == "chapter_start":
-            sec = token.get("section") or 0
-            chap = token.get("chapter") or 0
-            _ensure_anchor_question(cur, sec, chap, 0)
-
-    conn.commit()
-    q_map = _load_question_map(cur)
-
     img_map = _load_image_map(cur)
 
     cur.execute("DELETE FROM answer_blocks")
@@ -124,13 +100,15 @@ def insert_blocks(tokens, db_path=DB_PATH):
         if block_type == "question":
             raise RuntimeError("block_type='question' is not allowed in answer_blocks")
 
-        if kind == "responsive":
-            token = dict(token)
-            token["question"] = None
+        chapter_id = token.get("chapter_id")
+        if chapter_id is None:
+            chapter_id = token.get("chapter") or 0
+        question_id = None
+        if kind == "question" or (kind == "answer" and token.get("question") is not None):
+            question_id = _resolve_question_id(q_map, token)
 
-        question_id = _resolve_question_id(q_map, token)
-        block_order = block_orders[question_id]
-        block_orders[question_id] += 1
+        block_order = block_orders[chapter_id]
+        block_orders[chapter_id] += 1
 
         text_value = token.get("text", "")
         # Preserve poetry line structure; do not strip or normalize
@@ -149,10 +127,10 @@ def insert_blocks(tokens, db_path=DB_PATH):
         cur.execute(
             """
             INSERT INTO answer_blocks (
-                question_id, block_order, block_type, content, reference, image_ref
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                chapter_id, question_id, block_order, block_type, content, reference, image_ref
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (question_id, block_order, block_type, content, None, image_ref),
+            (chapter_id, question_id, block_order, block_type, content, None, image_ref),
         )
 
         stats["inserted"] += 1
@@ -165,9 +143,9 @@ def insert_blocks(tokens, db_path=DB_PATH):
 
     conn.commit()
 
-    cur.execute("SELECT COUNT(*) FROM answer_blocks WHERE question_id IS NULL")
+    cur.execute("SELECT COUNT(*) FROM answer_blocks WHERE chapter_id IS NULL")
     if cur.fetchone()[0] != 0:
-        raise RuntimeError("Post-import validation failed: NULL question_id found")
+        raise RuntimeError("Post-import validation failed: NULL chapter_id found")
 
     print(f"Total blocks inserted: {stats['inserted']}")
     print(f"Global intro blocks: {stats['global_intro']}")

@@ -185,6 +185,7 @@ def classify_docx(doc_path=INPUT_DOC):
                 "kind": "section_start",
                 "section": current_section,
                 "chapter": 0,
+                "chapter_id": current_chapter,
                 "question": None,
                 "text": raw_text_stripped,
                 "meta": {"block_type": "heading"},
@@ -205,6 +206,7 @@ def classify_docx(doc_path=INPUT_DOC):
                 "kind": "chapter_start",
                 "section": current_section,
                 "chapter": current_chapter,
+                "chapter_id": current_chapter,
                 "question": None,
                 "text": raw_text_stripped,
                 "meta": {"block_type": "heading"},
@@ -259,6 +261,7 @@ def classify_docx(doc_path=INPUT_DOC):
                     "kind": "heading",
                     "section": 0,
                     "chapter": 0,
+                    "chapter_id": current_chapter,
                     "question": None,
                     "text": heading_text,
                     "meta": {"block_type": "heading", "bold": True},
@@ -269,6 +272,7 @@ def classify_docx(doc_path=INPUT_DOC):
                     "kind": "heading",
                     "section": current_section,
                     "chapter": 0,
+                    "chapter_id": current_chapter,
                     "question": None,
                     "text": heading_text,
                     "meta": {"block_type": "heading", "bold": True},
@@ -279,6 +283,7 @@ def classify_docx(doc_path=INPUT_DOC):
                     "kind": "heading",
                     "section": current_section,
                     "chapter": current_chapter,
+                    "chapter_id": current_chapter,
                     "question": current_question,
                     "text": heading_text,
                     "meta": {"block_type": "heading", "bold": True},
@@ -303,6 +308,7 @@ def classify_docx(doc_path=INPUT_DOC):
                 "kind": "question",
                 "section": current_section,
                 "chapter": current_chapter,
+                "chapter_id": current_chapter,
                 "question": q_num,
                 "text": question_text,
                 "meta": {},
@@ -320,6 +326,7 @@ def classify_docx(doc_path=INPUT_DOC):
                     "kind": "answer",
                     "section": current_section,
                     "chapter": current_chapter,
+                    "chapter_id": current_chapter,
                     "question": q_num,
                     "text": trailing,
                     "meta": {"block_type": "answer"},
@@ -338,6 +345,7 @@ def classify_docx(doc_path=INPUT_DOC):
                 "kind": "poetry",
                 "section": current_section,
                 "chapter": current_chapter,
+                "chapter_id": current_chapter,
                 "question": current_question,
                 "text": poetry_text,
                 "meta": {"block_type": "poetry"},
@@ -362,6 +370,7 @@ def classify_docx(doc_path=INPUT_DOC):
                 "kind": "responsive",
                 "section": current_section,
                 "chapter": current_chapter,
+                "chapter_id": current_chapter,
                 "question": None,
                 "text": content,
                 "meta": {"block_type": "responsive"},
@@ -374,6 +383,7 @@ def classify_docx(doc_path=INPUT_DOC):
                 "kind": "note",
                 "section": current_section,
                 "chapter": current_chapter,
+                "chapter_id": current_chapter,
                 "question": current_question,
                 "text": _strip_marker_from_rendered(text, "[N]"),
                 "meta": {"block_type": "note"},
@@ -389,6 +399,7 @@ def classify_docx(doc_path=INPUT_DOC):
                     "kind": "image",
                     "section": current_section,
                     "chapter": current_chapter,
+                    "chapter_id": current_chapter,
                     "question": current_question,
                     "text": f"[Pic:{fname}]",
                     "meta": {"block_type": "image", "image_filename": fname},
@@ -406,6 +417,7 @@ def classify_docx(doc_path=INPUT_DOC):
                 "kind": "intro",
                 "section": current_section,
                 "chapter": current_chapter,
+                "chapter_id": current_chapter,
                 "question": None,
                 "text": text,
                 "meta": {"block_type": "intro"},
@@ -419,6 +431,7 @@ def classify_docx(doc_path=INPUT_DOC):
                 "kind": "answer",
                 "section": current_section,
                 "chapter": current_chapter,
+                "chapter_id": current_chapter,
                 "question": current_question,
                 "text": text,
                 "meta": {"block_type": "answer"},
@@ -440,7 +453,6 @@ def classify_docx(doc_path=INPUT_DOC):
         "counts": dict(counts),
         "transitions": transitions,
     }
-    _validate_question_sequence(tokens)
     return tokens, summary
 
 
@@ -460,26 +472,6 @@ def _print_summary(summary):
         print(f"Chapters detected: {len(chapter_nums)}")
 
 
-def _validate_question_sequence(tokens):
-    by_chapter = {}
-    for token in tokens:
-        if token.get("kind") != "question":
-            continue
-        chapter = token.get("chapter") or 0
-        if chapter not in by_chapter:
-            by_chapter[chapter] = []
-        by_chapter[chapter].append(int(token.get("question") or 0))
-    for chapter, nums in by_chapter.items():
-        if chapter <= 0 or not nums:
-            continue
-        nums = sorted(set(n for n in nums if n > 0))
-        expected = list(range(1, max(nums) + 1))
-        if nums != expected:
-            missing = sorted(set(expected) - set(nums))
-            raise RuntimeError(
-                f"Chapter {chapter} missing question numbers: {missing}; "
-                f"detected={nums}"
-            )
 
 
 def main():

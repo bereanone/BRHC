@@ -31,7 +31,7 @@ LIMIT 1
 """
 
 insert_sql = """
-INSERT INTO brhc_images (filename, description, image_blob)
+INSERT OR IGNORE INTO brhc_images (filename, description, image_blob)
 VALUES (?, ?, ?)
 """
 
