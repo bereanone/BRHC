@@ -146,9 +146,9 @@ class BrhcDatabase {
     final db = await database;
     final rows = await db.rawQuery(
       '''
-      SELECT section_title
-      FROM brhc_sections
-      ORDER BY order_index
+      SELECT DISTINCT section_number, section_title
+      FROM questions
+      ORDER BY section_number
       ''',
     );
     return rows
@@ -167,19 +167,30 @@ class BrhcDatabase {
 
     final rows = await db.rawQuery(
       '''
-      SELECT DISTINCT
-        q.chapter_number AS chapter_number,
+      WITH current_section AS (
+        SELECT section_number, MIN(chapter_id) AS min_chapter
+        FROM questions
+        WHERE section_title = ?
+        GROUP BY section_number
+      ),
+      next_section AS (
+        SELECT MIN(chapter_id) AS next_min_chapter
+        FROM questions
+        WHERE section_number > (SELECT section_number FROM current_section)
+      )
+      SELECT
+        c.chapter_id AS chapter_number,
         c.chapter_title AS raw_chapter_title,
-        s.section_title AS raw_section_title
-      FROM questions q
-      JOIN brhc_sections s
-        ON s.section_id = q.section_number
-      JOIN brhc_chapters c
-        ON c.chapter_id = q.chapter_number
-      WHERE s.section_title = ?
-      ORDER BY q.chapter_number
+        ? AS raw_section_title
+      FROM chapters c
+      WHERE c.chapter_id >= (SELECT min_chapter FROM current_section)
+        AND (
+          (SELECT next_min_chapter FROM next_section) IS NULL
+          OR c.chapter_id < (SELECT next_min_chapter FROM next_section)
+        )
+      ORDER BY c.chapter_id
       ''',
-      [sectionTitle],
+      [sectionTitle, sectionTitle],
     );
 
     return rows.map<ChapterEntry>((row) {
@@ -204,42 +215,36 @@ class BrhcDatabase {
 
     final currentRows = await db.rawQuery(
       '''
-      SELECT c.chapter_id AS chapter_number, s.order_index AS section_order
-      FROM brhc_chapters c
-      JOIN brhc_sections s ON s.section_id = c.section_id
-      WHERE s.section_title = ?
-        AND c.chapter_title = ?
+      SELECT chapter_id AS chapter_number
+      FROM chapters
+      WHERE chapter_title = ?
       LIMIT 1
       ''',
-      [sectionTitle, chapterTitle],
+      [chapterTitle],
     );
     if (currentRows.isEmpty) return null;
     final chapterNumber = currentRows.first['chapter_number'] as int;
-    final sectionOrder = currentRows.first['section_order'] as int;
 
     final rows = await db.rawQuery(
       '''
       SELECT
-        c.chapter_id AS chapter_number,
-        c.chapter_title AS raw_chapter_title,
-        s.section_title AS raw_section_title
-      FROM brhc_chapters c
-      JOIN brhc_sections s ON s.section_id = c.section_id
-      WHERE (s.order_index < ?)
-         OR (s.order_index = ? AND c.chapter_id < ?)
-      ORDER BY s.order_index DESC, c.chapter_id DESC
+        chapter_id AS chapter_number,
+        chapter_title AS raw_chapter_title
+      FROM chapters
+      WHERE chapter_id < ?
+      ORDER BY chapter_id DESC
       LIMIT 1
       ''',
-      [sectionOrder, sectionOrder, chapterNumber],
+      [chapterNumber],
     );
 
     if (rows.isEmpty) return null;
 
     final row = rows.first;
     return ChapterEntry(
-      sectionTitle: _stripTagPrefix(row['raw_section_title'] as String),
+      sectionTitle: _stripTagPrefix(sectionTitle),
       chapterTitle: _stripTagPrefix(row['raw_chapter_title'] as String),
-      rawSectionTitle: row['raw_section_title'] as String,
+      rawSectionTitle: sectionTitle,
       rawChapterTitle: row['raw_chapter_title'] as String,
       firstBlockId: 0,
     );
@@ -253,42 +258,36 @@ class BrhcDatabase {
 
     final currentRows = await db.rawQuery(
       '''
-      SELECT c.chapter_id AS chapter_number, s.order_index AS section_order
-      FROM brhc_chapters c
-      JOIN brhc_sections s ON s.section_id = c.section_id
-      WHERE s.section_title = ?
-        AND c.chapter_title = ?
+      SELECT chapter_id AS chapter_number
+      FROM chapters
+      WHERE chapter_title = ?
       LIMIT 1
       ''',
-      [sectionTitle, chapterTitle],
+      [chapterTitle],
     );
     if (currentRows.isEmpty) return null;
     final chapterNumber = currentRows.first['chapter_number'] as int;
-    final sectionOrder = currentRows.first['section_order'] as int;
 
     final rows = await db.rawQuery(
       '''
       SELECT
-        c.chapter_id AS chapter_number,
-        c.chapter_title AS raw_chapter_title,
-        s.section_title AS raw_section_title
-      FROM brhc_chapters c
-      JOIN brhc_sections s ON s.section_id = c.section_id
-      WHERE (s.order_index > ?)
-         OR (s.order_index = ? AND c.chapter_id > ?)
-      ORDER BY s.order_index ASC, c.chapter_id ASC
+        chapter_id AS chapter_number,
+        chapter_title AS raw_chapter_title
+      FROM chapters
+      WHERE chapter_id > ?
+      ORDER BY chapter_id ASC
       LIMIT 1
       ''',
-      [sectionOrder, sectionOrder, chapterNumber],
+      [chapterNumber],
     );
 
     if (rows.isEmpty) return null;
 
     final row = rows.first;
     return ChapterEntry(
-      sectionTitle: _stripTagPrefix(row['raw_section_title'] as String),
+      sectionTitle: _stripTagPrefix(sectionTitle),
       chapterTitle: _stripTagPrefix(row['raw_chapter_title'] as String),
-      rawSectionTitle: row['raw_section_title'] as String,
+      rawSectionTitle: sectionTitle,
       rawChapterTitle: row['raw_chapter_title'] as String,
       firstBlockId: 0,
     );
@@ -303,7 +302,7 @@ class BrhcDatabase {
     final rows = await db.rawQuery(
       '''
       SELECT image_blob
-      FROM brhc_images
+      FROM images
       WHERE LOWER(filename) = LOWER(?)
       LIMIT 1
       ''',
@@ -321,9 +320,10 @@ class BrhcDatabase {
     final db = await database;
     final currentRows = await db.rawQuery(
       '''
-      SELECT order_index
-      FROM brhc_sections
+      SELECT section_number
+      FROM questions
       WHERE section_title = ?
+      ORDER BY section_number ASC
       LIMIT 1
       ''',
       [sectionTitle],
@@ -331,15 +331,13 @@ class BrhcDatabase {
     if (currentRows.isEmpty) {
       return null;
     }
-    final currentOrder = currentRows.first['order_index'] as int;
+    final currentOrder = currentRows.first['section_number'] as int;
     final prevRows = await db.rawQuery(
       '''
-      SELECT s.section_title, s.order_index
-      FROM brhc_sections s
-      JOIN questions q ON q.section_number = s.section_id
-      WHERE s.order_index < ?
-      GROUP BY s.section_title, s.order_index
-      ORDER BY s.order_index DESC
+      SELECT DISTINCT q.section_title, q.section_number
+      FROM questions q
+      WHERE q.section_number < ?
+      ORDER BY q.section_number DESC
       LIMIT 1
       ''',
       [currentOrder],
@@ -350,16 +348,14 @@ class BrhcDatabase {
     final prevSection = prevRows.first['section_title'] as String;
     final chapterRows = await db.rawQuery(
       '''
-      SELECT q.chapter_number, c.chapter_title AS raw_chapter_title
+      SELECT DISTINCT q.chapter_id, c.chapter_title AS raw_chapter_title
       FROM questions q
-      JOIN brhc_chapters c ON c.chapter_id = q.chapter_number
-      WHERE q.section_number = (
-        SELECT section_id FROM brhc_sections WHERE section_title = ?
-      )
-      ORDER BY q.chapter_number ASC
+      JOIN chapters c ON c.chapter_id = q.chapter_id
+      WHERE q.section_number = ?
+      ORDER BY q.chapter_id ASC
       LIMIT 1
       ''',
-      [prevSection],
+      [prevRows.first['section_number']],
     );
     if (chapterRows.isEmpty) {
       return null;
@@ -380,9 +376,10 @@ class BrhcDatabase {
     final db = await database;
     final currentRows = await db.rawQuery(
       '''
-      SELECT order_index
-      FROM brhc_sections
+      SELECT section_number
+      FROM questions
       WHERE section_title = ?
+      ORDER BY section_number ASC
       LIMIT 1
       ''',
       [sectionTitle],
@@ -390,15 +387,13 @@ class BrhcDatabase {
     if (currentRows.isEmpty) {
       return null;
     }
-    final currentOrder = currentRows.first['order_index'] as int;
+    final currentOrder = currentRows.first['section_number'] as int;
     final nextRows = await db.rawQuery(
       '''
-      SELECT s.section_title, s.order_index
-      FROM brhc_sections s
-      JOIN questions q ON q.section_number = s.section_id
-      WHERE s.order_index > ?
-      GROUP BY s.section_title, s.order_index
-      ORDER BY s.order_index ASC
+      SELECT DISTINCT q.section_title, q.section_number
+      FROM questions q
+      WHERE q.section_number > ?
+      ORDER BY q.section_number ASC
       LIMIT 1
       ''',
       [currentOrder],
@@ -409,16 +404,14 @@ class BrhcDatabase {
     final nextSection = nextRows.first['section_title'] as String;
     final chapterRows = await db.rawQuery(
       '''
-      SELECT q.chapter_number, c.chapter_title AS raw_chapter_title
+      SELECT DISTINCT q.chapter_id, c.chapter_title AS raw_chapter_title
       FROM questions q
-      JOIN brhc_chapters c ON c.chapter_id = q.chapter_number
-      WHERE q.section_number = (
-        SELECT section_id FROM brhc_sections WHERE section_title = ?
-      )
-      ORDER BY q.chapter_number ASC
+      JOIN chapters c ON c.chapter_id = q.chapter_id
+      WHERE q.section_number = ?
+      ORDER BY q.chapter_id ASC
       LIMIT 1
       ''',
-      [nextSection],
+      [nextRows.first['section_number']],
     );
     if (chapterRows.isEmpty) {
       return null;
@@ -441,9 +434,8 @@ class BrhcDatabase {
     final db = await database;
     final rows = await db.rawQuery(
       '''
-      SELECT s.section_title
-      FROM brhc_sections s
-      JOIN questions q ON q.section_number = s.section_id
+      SELECT q.section_title
+      FROM questions q
       JOIN answer_blocks ab ON ab.question_id = q.id
       WHERE ab.id < ?
       ORDER BY ab.id DESC
@@ -463,9 +455,8 @@ class BrhcDatabase {
     final db = await database;
     final rows = await db.rawQuery(
       '''
-      SELECT s.section_title
-      FROM brhc_sections s
-      JOIN questions q ON q.section_number = s.section_id
+      SELECT q.section_title
+      FROM questions q
       JOIN answer_blocks ab ON ab.question_id = q.id
       WHERE ab.id > ?
       ORDER BY ab.id ASC

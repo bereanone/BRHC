@@ -99,23 +99,22 @@ def _next_block_id(cur: sqlite3.Cursor) -> int:
     return int(cur.fetchone()[0]) + 1
 
 
-def _insert_section(cur: sqlite3.Cursor, title: str, order_index: int) -> int:
+def _insert_section(cur: sqlite3.Cursor, title: str, section_number: int) -> int:
     cur.execute(
-        "INSERT INTO brhc_sections (section_title, order_index) VALUES (?, ?)",
-        (title, order_index),
+        "INSERT INTO sections (section_number, section_title) VALUES (?, ?)",
+        (section_number, title),
     )
     return int(cur.lastrowid)
 
 
 def _insert_chapter(
     cur: sqlite3.Cursor,
-    section_id: int | None,
+    chapter_id: int,
     title: str,
-    order_index: int,
 ) -> int:
     cur.execute(
-        "INSERT INTO brhc_chapters (section_id, chapter_title, order_index) VALUES (?, ?, ?)",
-        (section_id, title, order_index),
+        "INSERT INTO chapters (chapter_id, chapter_title) VALUES (?, ?)",
+        (chapter_id, title),
     )
     return int(cur.lastrowid)
 
@@ -173,34 +172,34 @@ def _insert_question(
 
 def _insert_question_row(
     cur: sqlite3.Cursor,
+    section_number: int | None,
     section_title: str | None,
-    chapter_title: str | None,
-    chapter_number: int | None,
+    chapter_id: int | None,
     question_number: int,
     question_text: str,
 ) -> None:
     cur.execute(
         """
         INSERT INTO questions (
-            section_title, chapter_title, chapter_number, content_type,
-            question_number, question_text, answer_text
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            chapter_id, order_in_chapter, question_number, question_text,
+            section_number, section_title, contains_commentary,
+            contains_poetry, needs_review
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)
         """,
         (
-            section_title,
-            chapter_title,
-            chapter_number,
-            "question",
+            chapter_id,
+            question_number,
             question_number,
             question_text,
-            None,
+            section_number,
+            section_title,
         ),
     )
 
 
 def _delete_content_tables(cur: sqlite3.Cursor) -> None:
-    cur.execute("DELETE FROM brhc_sections")
-    cur.execute("DELETE FROM brhc_chapters")
+    cur.execute("DELETE FROM sections")
+    cur.execute("DELETE FROM chapters")
     cur.execute("DELETE FROM doc_blocks")
     cur.execute("DELETE FROM d_questions")
     cur.execute("DELETE FROM questions")
@@ -211,9 +210,9 @@ def _validate(cur: sqlite3.Cursor) -> list[str]:
     cur.execute(
         """
         SELECT COUNT(*)
-        FROM brhc_chapters c
-        LEFT JOIN brhc_sections s ON s.section_id = c.section_id
-        WHERE c.section_id IS NOT NULL AND s.section_id IS NULL
+        FROM questions q
+        LEFT JOIN chapters c ON c.chapter_id = q.chapter_id
+        WHERE q.chapter_id IS NOT NULL AND c.chapter_id IS NULL
         """
     )
     if cur.fetchone()[0] != 0:
@@ -271,7 +270,7 @@ def main() -> None:
     section_order = 0
     chapter_order = 0
     current_section_title = None
-    current_section_id = None
+    current_section_number = None
     current_chapter_title = None
     current_chapter_num = None
     block_order = 0
@@ -400,8 +399,8 @@ def main() -> None:
             )
             _insert_question_row(
                 cur,
+                current_section_number,
                 current_section_title,
-                current_chapter_title,
                 current_chapter_num,
                 question_counter,
                 text,
@@ -462,7 +461,7 @@ def main() -> None:
             chapter_order += 1
             chapters_processed += 1
             intro_active = False
-            _insert_chapter(cur, current_section_id, current_chapter_title, chapter_order)
+            _insert_chapter(cur, current_chapter_num, current_chapter_title)
             block_order += 1
             block_id = allocate_block_id("chapter", raw_text, block_order)
             _insert_doc_block(
@@ -483,7 +482,8 @@ def main() -> None:
             current_section_title = stripped
             section_order += 1
             sections_total += 1
-            current_section_id = _insert_section(cur, current_section_title, section_order)
+            _insert_section(cur, current_section_title, section_order)
+            current_section_number = section_order
             block_order += 1
             block_id = allocate_block_id("section", raw_text, block_order)
             _insert_doc_block(

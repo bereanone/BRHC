@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../data/brhc_database.dart';
 import '../models/brhc_models.dart';
@@ -7,7 +8,7 @@ import 'chapters_screen.dart' as chapters;
 import 'sections_screen.dart';
 import '../widgets/fade_route.dart';
 import 'questions_header.dart';
-import 'package:brhc_app/widgets/lib/widgets/chapter_blocks_view.dart';
+import 'package:brhc_app/widgets/chapter_blocks_view.dart';
 
 class QuestionsScreen extends StatefulWidget {
   final String sectionTitle;
@@ -33,7 +34,7 @@ class QuestionsScreen extends StatefulWidget {
 
 class _QuestionsScreenState extends State<QuestionsScreen> {
   final ScrollController _scrollController = ScrollController();
-  final Map<int, BuildContext> _questionContexts = {};
+  final Map<int, GlobalKey> _questionContexts = {};
   List<_QuestionRow> _sortedQuestions = [];
   int _currentQuestionIndex = 0;
   bool _navIndexInitialized = false;
@@ -43,10 +44,8 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
 
   Future<_ChapterScreenData> _loadData() async {
     final db = BrhcDatabase.instance;
-    final rawQuestions = await _fetchQuestionRows();
-    final questions =
-        rawQuestions.where((q) => q.questionNumber > 0).toList();
-    _assertQuestionsOrdered(questions, widget.rawChapterTitle);
+    final questions = await _fetchQuestionRows();
+
     final prevChapter = await db.fetchPreviousChapter(
       sectionTitle: widget.sectionTitle,
       chapterTitle: widget.chapterTitle,
@@ -55,6 +54,7 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
       sectionTitle: widget.sectionTitle,
       chapterTitle: widget.chapterTitle,
     );
+
     return _ChapterScreenData(
       questions: questions,
       prevChapter: prevChapter,
@@ -64,21 +64,18 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
 
   Future<List<_QuestionRow>> _fetchQuestionRows() async {
     final db = await BrhcDatabase.instance.database;
-    final chapterNumber = _parseChapterNumber(widget.rawChapterTitle);
-    if (chapterNumber == null) {
+    final chapterId = _parseChapterNumber(widget.rawChapterTitle);
+    if (chapterId == null) {
       return [];
     }
     final rows = await db.rawQuery(
       '''
-      SELECT *
+      SELECT id, question_number, question_text
       FROM questions
-      WHERE chapter_number = ?
-        AND id > 0
-      ORDER BY question_number ASC
+      WHERE chapter_id = ?
+      ORDER BY order_in_chapter ASC
       ''',
-      [
-        chapterNumber,
-      ],
+      [chapterId],
     );
     return rows
         .map<_QuestionRow>(
@@ -119,12 +116,15 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
               _navIndexInitialized = true;
             }
 
-            _questionContexts.clear();
-            
             final hasQuestions = _sortedQuestions.isNotEmpty;
             final currentQuestionNumber = hasQuestions
                 ? _sortedQuestions[_currentQuestionIndex].questionNumber
                 : 0;
+            if (hasQuestions) {
+              for (final question in _sortedQuestions) {
+                _questionContexts.putIfAbsent(question.id, () => GlobalKey());
+              }
+            }
 
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (_didAutoScroll) return;
@@ -133,6 +133,53 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                 _scrollToQuestion(_sortedQuestions.first.id);
               }
             });
+
+            if (!hasQuestions) {
+              return Column(
+                children: [
+                  ChapterHeader(
+                    sectionTitle: _displaySectionTitle(widget.sectionTitle),
+                    chapterTitle: _buildChapterHeader(
+                      widget.rawChapterTitle,
+                    ),
+                    onSectionTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const SectionsScreen(),
+                        ),
+                      );
+                    },
+                    onChapterTap: () {
+                      Navigator.of(context).push(
+                        FadeRoute(
+                          builder: (_) => ChaptersScreen(
+                            sectionTitle: widget.sectionTitle,
+                            displaySectionTitle: widget.displaySectionTitle,
+                          ),
+                      ),
+                    );
+                  },
+                ),
+                QuestionNavBar(
+                  currentNumber: 0,
+                  onPrevQuestion: null,
+                  onNextQuestion: null,
+                  onPrevChapter: prevChapter == null
+                      ? null
+                      : () => _jumpToChapter(previous: true),
+                  onNextChapter: nextChapter == null
+                      ? null
+                      : () => _jumpToChapter(previous: false),
+                ),
+                Expanded(
+                  child: ChapterBlocksView(
+                    chapterId: chapterId,
+                    scrollController: _scrollController,
+                  ),
+                  ),
+                ],
+              );
+            }
 
             return Column(
               children: [
@@ -179,7 +226,11 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                       : () => _jumpToChapter(previous: false),
                 ),
                 Expanded(
-                  child: ChapterBlocksView(chapterId: chapterId),
+                  child: ChapterBlocksView(
+                    chapterId: chapterId,
+                    questionKeys: _questionContexts,
+                    scrollController: _scrollController,
+                  ),
                 ),
               ],
             );
@@ -216,25 +267,18 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
   }
 
   void _scrollToQuestion(int questionId) {
-    void attemptScroll(int remaining) {
-      final context = _questionContexts[questionId];
-      if (context == null) {
-        if (remaining > 0) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            attemptScroll(remaining - 1);
-          });
-        }
-        return;
-      }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final key = _questionContexts[questionId];
+      final context = key?.currentContext;
+      if (context == null) return;
       Scrollable.ensureVisible(
         context,
         duration: const Duration(milliseconds: 350),
         curve: Curves.easeInOut,
         alignment: 0.0,
       );
-    }
-
-    attemptScroll(6);
+    });
   }
 
   String _buildChapterHeader(String rawTitle) {
@@ -253,23 +297,6 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
     return '${parsed.number}. ${parsed.title}';
   }
 
-  void _assertQuestionsOrdered(
-    List<_QuestionRow> questions,
-    String rawChapterTitle,
-  ) {
-    var last = 0;
-    for (final question in questions) {
-      final current = question.questionNumber;
-      if (current < last) {
-        debugPrint(
-          '[RENDER] Question order error in "$rawChapterTitle": '
-          '$current after $last',
-        );
-        throw StateError('Question order error in $rawChapterTitle');
-      }
-      last = current;
-    }
-  }
 
 
   void _jumpToQuestion({required bool previous}) {

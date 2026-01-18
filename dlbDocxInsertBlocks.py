@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 from collections import defaultdict
 
@@ -17,16 +18,13 @@ def _load_question_map(cur):
     return q_map
 
 
-def _load_image_map(cur):
-    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='brhc_images'")
-    if not cur.fetchone():
-        return {}
-    cur.execute("SELECT image_id, filename FROM brhc_images")
-    return {row[1].strip().lower(): row[0] for row in cur.fetchall() if row[1]}
+def _load_image_filenames(cur):
+    cur.execute("SELECT filename FROM images")
+    return {row[0].strip().lower() for row in cur.fetchall() if row[0]}
 
 
 def _resolve_question_id(q_map, token):
-    chapter = token.get("chapter") or 0
+    chapter = token.get("chapter_id") or token.get("chapter") or 0
     qnum = token.get("question")
 
     if qnum is not None:
@@ -35,6 +33,10 @@ def _resolve_question_id(q_map, token):
         key = (chapter, 0)
 
     return q_map.get(key)
+
+
+def _strip_tag_prefix(text):
+    return re.sub(r"^\s*\[[A-Za-z]+\]\s*", "", text or "").strip()
 
 
 def _ensure_anchor_question(cur, section, chapter, qnum):
@@ -82,13 +84,65 @@ def insert_blocks(tokens, db_path=DB_PATH):
         "responsive": 0,
     }
 
-    q_map = _load_question_map(cur)
+    img_filenames = _load_image_filenames(cur)
 
-    img_map = _load_image_map(cur)
+    cur.execute("DELETE FROM questions")
+    cur.execute("DELETE FROM chapters")
 
     cur.execute("DELETE FROM answer_blocks")
 
     block_orders = defaultdict(int)
+    question_orders = defaultdict(int)
+    chapter_titles = {}
+    current_section = 0
+    current_section_title = ""
+
+    for token in tokens:
+        kind = token.get("kind")
+        if kind == "section_start":
+            current_section = token.get("section") or 0
+            current_section_title = _strip_tag_prefix(token.get("text", ""))
+            continue
+        if kind == "chapter_start":
+            chapter_id = token.get("chapter_id") or 0
+            if chapter_id not in chapter_titles:
+                chapter_titles[chapter_id] = _strip_tag_prefix(token.get("text", ""))
+            continue
+        if kind == "question":
+            chapter_id = token.get("chapter_id") or 0
+            qnum = token.get("question")
+            if qnum is None:
+                continue
+            order_in_chapter = question_orders[chapter_id]
+            question_orders[chapter_id] += 1
+            cur.execute(
+                """
+                INSERT INTO questions (
+                    chapter_id,
+                    order_in_chapter,
+                    question_number,
+                    question_text,
+                    section_number,
+                    section_title
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    chapter_id,
+                    order_in_chapter,
+                    qnum,
+                    token.get("text", ""),
+                    current_section,
+                    current_section_title,
+                ),
+            )
+
+    for chapter_id in sorted(chapter_titles.keys()):
+        cur.execute(
+            "INSERT INTO chapters (chapter_id, chapter_title) VALUES (?, ?)",
+            (chapter_id, chapter_titles[chapter_id]),
+        )
+
+    q_map = _load_question_map(cur)
 
     for token in tokens:
         kind = token.get("kind")
@@ -120,9 +174,11 @@ def insert_blocks(tokens, db_path=DB_PATH):
         if block_type == "image":
             filename = token.get("meta", {}).get("image_filename")
             if filename:
-                image_ref = img_map.get(filename.strip().lower())
-            if image_ref is None:
-                raise RuntimeError(f"Missing image_ref for {filename}")
+                image_ref = filename.strip()
+                if image_ref.lower() not in img_filenames:
+                    raise RuntimeError(f"Missing image_ref for {filename}")
+            else:
+                raise RuntimeError("Missing image_ref for image block")
 
         cur.execute(
             """
@@ -146,6 +202,12 @@ def insert_blocks(tokens, db_path=DB_PATH):
     cur.execute("SELECT COUNT(*) FROM answer_blocks WHERE chapter_id IS NULL")
     if cur.fetchone()[0] != 0:
         raise RuntimeError("Post-import validation failed: NULL chapter_id found")
+    cur.execute("SELECT COUNT(*) FROM questions")
+    if cur.fetchone()[0] == 0:
+        raise RuntimeError("Post-import validation failed: questions table is empty")
+    cur.execute("SELECT COUNT(*) FROM chapters")
+    if cur.fetchone()[0] == 0:
+        raise RuntimeError("Post-import validation failed: chapters table is empty")
 
     print(f"Total blocks inserted: {stats['inserted']}")
     print(f"Global intro blocks: {stats['global_intro']}")

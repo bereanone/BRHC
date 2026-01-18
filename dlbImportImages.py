@@ -13,25 +13,34 @@ cur = conn.cursor()
 print(f"📂 Reading images from: {IMAGES_DIR}")
 print(f"🗄️  Writing to database: {DB}")
 
+# Clear existing images to ensure clean rebuild
+cur.execute("DELETE FROM images")
 cur.execute(
     """
-    CREATE TABLE IF NOT EXISTS brhc_images (
+    CREATE TABLE IF NOT EXISTS images (
         image_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        filename TEXT NOT NULL,
+        filename TEXT,
         description TEXT,
-        image_blob BLOB NOT NULL
+        image_blob BLOB
     )
     """
 )
 
+# Verify images table schema
+cur.execute("PRAGMA table_info(images)")
+cols = {row[1] for row in cur.fetchall()}
+required = {"image_id", "filename", "description", "image_blob"}
+if not required.issubset(cols):
+    raise RuntimeError("images table schema mismatch; aborting import")
+
 select_sql = """
-SELECT image_id FROM brhc_images
+SELECT image_id FROM images
 WHERE LOWER(filename) = LOWER(?)
 LIMIT 1
 """
 
 insert_sql = """
-INSERT OR IGNORE INTO brhc_images (filename, description, image_blob)
+INSERT OR IGNORE INTO images (filename, description, image_blob)
 VALUES (?, ?, ?)
 """
 

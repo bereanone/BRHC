@@ -38,6 +38,21 @@ def _is_blueish(rgb):
     return b >= 150 and b > g + 30 and b > r + 30
 
 
+def _is_close_color(rgb, target, tol=40):
+    t = _rgb_tuple(rgb)
+    if not t:
+        return False
+    return all(abs(t[i] - target[i]) <= tol for i in range(3))
+
+
+def _wrap_color_markers(text, rgb):
+    if _is_close_color(rgb, (112, 48, 160)):
+        return f"[L]{text}[/L]"
+    if _is_close_color(rgb, (0, 176, 80)):
+        return f"[R]{text}[/R]"
+    return text
+
+
 def _extract_leading_qnum(text):
     m = QNUM_START_RE.match(text)
     if m:
@@ -62,7 +77,10 @@ def _render_runs_with_emphasis(paragraph):
         if not run.text:
             continue
 
-        text = run.text
+        text = _wrap_color_markers(
+            run.text,
+            run.font.color.rgb if run.font and run.font.color else None,
+        )
 
         is_bold = bool(run.bold or (run.font and run.font.bold))
         is_italic = bool(run.italic or (run.font and run.font.italic))
@@ -101,6 +119,36 @@ def _render_runs_with_emphasis(paragraph):
             last_tag = None
 
     return "".join(parts)
+
+def _render_run_with_emphasis(run):
+    text = _wrap_color_markers(
+        run.text,
+        run.font.color.rgb if run.font and run.font.color else None,
+    )
+    if not text:
+        return ""
+
+    is_bold = bool(run.bold or (run.font and run.font.bold))
+    is_italic = bool(run.italic or (run.font and run.font.italic))
+    is_underline = bool(getattr(run, "underline", False))
+    is_emphasis = (
+        bool(getattr(run.style, "name", ""))
+        and "emphasis" in getattr(run.style, "name", "").lower()
+    )
+
+    wrapper = None
+    if is_emphasis:
+        wrapper = "em"
+    elif is_italic:
+        wrapper = "i"
+
+    if is_bold and not text.strip().startswith("<strong>"):
+        text = f"<strong>{text}</strong>"
+    if wrapper and not text.strip().startswith(f"<{wrapper}>"):
+        text = f"<{wrapper}>{text}</{wrapper}>"
+    if is_underline and not text.strip().startswith("<u>"):
+        text = f"<u>{text}</u>"
+    return text
 
 
 def _strip_marker_from_rendered(text, marker):
@@ -217,6 +265,8 @@ def classify_docx(doc_path=INPUT_DOC):
 
         has_blue = False
         question_text_parts = []
+        trailing_parts = []
+        seen_blue = False
 
         for run in para.runs:
             if not run.text:
@@ -224,7 +274,10 @@ def classify_docx(doc_path=INPUT_DOC):
             rgb = run.font.color.rgb if run.font.color else None
             if _is_blueish(rgb):
                 has_blue = True
+                seen_blue = True
                 question_text_parts.append(run.text)
+            elif seen_blue:
+                trailing_parts.append(_render_run_with_emphasis(run))
         q_num = forced_qnum
 
         # Case 1: red question number without blue text → buffer it
@@ -316,8 +369,8 @@ def classify_docx(doc_path=INPUT_DOC):
             counts["question"] += 1
             pending_qnum = None
 
-            trailing = ""
-            if "?" in question_text:
+            trailing = "".join(trailing_parts).strip()
+            if not trailing and "?" in question_text:
                 parts = question_text.split("?", 1)
                 if len(parts) > 1:
                     trailing = parts[1].strip()

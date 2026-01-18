@@ -48,28 +48,30 @@ class QuestionNavBar extends StatelessWidget {
             style: buttonStyle,
             child: const Text('<<'),
           ),
-          const SizedBox(width: 6),
-          TextButton(
-            key: const ValueKey('nav-prev-question'),
-            onPressed: onPrevQuestion,
-            style: buttonStyle,
-            child: const Text('<'),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            '$currentNumber',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.2,
+          if (hasQuestions) ...[
+            const SizedBox(width: 6),
+            TextButton(
+              key: const ValueKey('nav-prev-question'),
+              onPressed: onPrevQuestion,
+              style: buttonStyle,
+              child: const Text('<'),
             ),
-          ),
-          const SizedBox(width: 10),
-          TextButton(
-            key: const ValueKey('nav-next-question'),
-            onPressed: onNextQuestion,
-            style: buttonStyle,
-            child: const Text('>'),
-          ),
+            const SizedBox(width: 10),
+            Text(
+              '$currentNumber',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.2,
+              ),
+            ),
+            const SizedBox(width: 10),
+            TextButton(
+              key: const ValueKey('nav-next-question'),
+              onPressed: onNextQuestion,
+              style: buttonStyle,
+              child: const Text('>'),
+            ),
+          ],
           const SizedBox(width: 6),
           TextButton(
             key: const ValueKey('nav-next-chapter'),

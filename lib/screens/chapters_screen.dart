@@ -12,7 +12,11 @@ class ChaptersScreen extends StatelessWidget {
   final String sectionTitle;
   final int? sectionIndex;
 
-  const ChaptersScreen({super.key, required this.sectionTitle, this.sectionIndex});
+  const ChaptersScreen({
+    super.key,
+    required this.sectionTitle,
+    this.sectionIndex,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -28,13 +32,13 @@ class ChaptersScreen extends StatelessWidget {
               return const Center(child: CircularProgressIndicator());
             }
             final chapters = snapshot.data ?? [];
-            // Always display: <number>. <title> (no duplication)
             final parsedSection = TitleFormatter.parseSectionTitle(sectionTitle);
             final displaySectionTitle =
                 parsedSection.number != null && parsedSection.number!.isNotEmpty
                     ? '${parsedSection.number}. ${parsedSection.title}'
                     : parsedSection.title;
-          final listItems = List.generate(chapters.length, (index) {
+
+            final listItems = List.generate(chapters.length, (index) {
               final chapter = chapters[index];
               final parsed = TitleFormatter.parseChapterTitle(chapter.rawChapterTitle);
               final number = parsed.number ?? '${index + 1}';
@@ -92,8 +96,18 @@ class ChaptersScreen extends StatelessWidget {
                               tooltip: 'Previous section',
                               onPressed: () async {
                                 final prevSection = await BrhcDatabase.instance
-                                    .fetchPreviousSectionWithContent(sectionTitle: sectionTitle);
-                                if (prevSection == null || !context.mounted) {
+                                    .fetchPreviousSectionWithContent(
+                                  sectionTitle: sectionTitle,
+                                );
+                                if (!context.mounted) {
+                                  return;
+                                }
+                                if (prevSection == null) {
+                                  Navigator.of(context).pushReplacement(
+                                    FadePageRoute<void>(
+                                      page: const SectionsScreen(),
+                                    ),
+                                  );
                                   return;
                                 }
                                 Navigator.of(context).pushReplacement(
@@ -132,7 +146,9 @@ class ChaptersScreen extends StatelessWidget {
                               tooltip: 'Next section',
                               onPressed: () async {
                                 final nextSection = await BrhcDatabase.instance
-                                    .fetchNextSectionWithContent(sectionTitle: sectionTitle);
+                                    .fetchNextSectionWithContent(
+                                  sectionTitle: sectionTitle,
+                                );
                                 if (nextSection == null || !context.mounted) {
                                   return;
                                 }
@@ -170,7 +186,6 @@ class ChaptersScreen extends StatelessWidget {
       ),
     );
   }
-
 }
 
 double _fontScale(BuildContext context) {

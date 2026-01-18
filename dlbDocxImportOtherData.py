@@ -70,21 +70,21 @@ def main():
     debug = os.environ.get("BRHC_TRACE", "").strip() == "1"
 
     # 1. Load Questions Map
-    cur.execute("SELECT id, section_number, chapter_number, question_number FROM questions")
+    cur.execute("SELECT id, section_number, chapter_id, question_number FROM questions")
     q_map = {}
     for row in cur.fetchall():
         key = (row[1], row[2], row[3])
         q_map[key] = row[0]
 
     # Load Section Titles Map
-    cur.execute("SELECT section_id, section_title FROM brhc_sections")
+    cur.execute("SELECT section_number, section_title FROM sections")
     section_title_map = {row[0]: row[1] for row in cur.fetchall()}
 
     # 2. Load Images Map
-    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='brhc_images'")
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='images'")
     if cur.fetchone():
-        cur.execute("SELECT image_id, filename FROM brhc_images")
-        img_map = {row[1].strip().lower(): row[0] for row in cur.fetchall() if row[1]}
+        cur.execute("SELECT image_id, filename FROM images")
+        img_map = {row[1].strip().lower(): row[1].strip() for row in cur.fetchall() if row[1]}
     else:
         img_map = {}
 
@@ -105,7 +105,7 @@ def main():
     # Ensure global introduction anchor exists (section=0, chapter=0, question=0)
     cur.execute("""
         SELECT id FROM questions
-        WHERE section_number=0 AND chapter_number=0 AND question_number=0
+        WHERE section_number=0 AND chapter_id=0 AND question_number=0
     """)
     row = cur.fetchone()
     if row:
@@ -113,15 +113,16 @@ def main():
     else:
         cur.execute("""
             INSERT INTO questions (
+                chapter_id,
+                order_in_chapter,
+                question_number,
+                question_text,
                 section_number,
                 section_title,
-                chapter_number,
-                chapter_title,
-                question_number,
-                sequence_in_book,
-                sequence_in_chapter,
-                question_text
-            ) VALUES (?, ?, 0, 'Introduction', 0, 0, 0, '[ANCHOR]')
+                contains_commentary,
+                contains_poetry,
+                needs_review
+            ) VALUES (0, 0, 0, '[ANCHOR]', ?, ?, 0, 0, 0)
         """, (0, 'Introduction'))
         global_intro_q_id = cur.lastrowid
     global_intro_block_order = 0
@@ -160,7 +161,7 @@ def main():
             # Ensure chapter anchor exists (question_number = 0)
             cur.execute("""
                 SELECT id FROM questions
-                WHERE section_number=? AND chapter_number=? AND question_number=0
+                WHERE section_number=? AND chapter_id=? AND question_number=0
             """, (current_section, current_chapter))
             row = cur.fetchone()
 
@@ -169,21 +170,20 @@ def main():
             else:
                 cur.execute("""
                     INSERT INTO questions (
+                        chapter_id,
+                        order_in_chapter,
+                        question_number,
+                        question_text,
                         section_number,
                         section_title,
-                        chapter_number,
-                        chapter_title,
-                        question_number,
-                        sequence_in_book,
-                        sequence_in_chapter,
-                        question_text
-                    ) VALUES (?, ?, ?, ?, 0, ?, 0, '[ANCHOR]')
+                        contains_commentary,
+                        contains_poetry,
+                        needs_review
+                    ) VALUES (?, 0, 0, '[ANCHOR]', ?, ?, 0, 0, 0)
                 """, (
-                    current_section,
-                    section_title,
                     current_chapter,
-                    f'Chapter {current_chapter}',
-                    current_chapter
+                    current_section,
+                    section_title
                 ))
                 anchor_q_id = cur.lastrowid
 
@@ -220,9 +220,9 @@ def main():
 
             cur.execute("""
                 INSERT INTO answer_blocks (
-                    question_id, block_order, block_type, content, reference, image_ref
-                ) VALUES (?, ?, ?, ?, ?, ?)
-            """, (global_intro_q_id, global_intro_block_order, block_type, content, None, image_ref))
+                    chapter_id, question_id, block_order, block_type, content, reference, image_ref
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (0, global_intro_q_id, global_intro_block_order, block_type, content, None, image_ref))
 
             stats["inserted"] += 1
             stats["with_q_id"] += 1
@@ -262,7 +262,7 @@ def main():
             # Responsive readings ALWAYS belong to the chapter anchor (question_number = 0)
             cur.execute("""
                 SELECT id FROM questions
-                WHERE section_number=? AND chapter_number=? AND question_number=0
+                WHERE section_number=? AND chapter_id=? AND question_number=0
             """, (current_section, current_chapter))
             row = cur.fetchone()
             if not row:
@@ -274,9 +274,9 @@ def main():
 
             cur.execute("""
                 INSERT INTO answer_blocks (
-                    question_id, block_order, block_type, content, reference, image_ref
-                ) VALUES (?, ?, ?, ?, ?, ?)
-            """, (target_q_id, block_order, block_type, content, None, None))
+                    chapter_id, question_id, block_order, block_type, content, reference, image_ref
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (current_chapter, target_q_id, block_order, block_type, content, None, None))
 
             stats["inserted"] += 1
             stats["with_q_id"] += 1
@@ -316,9 +316,9 @@ def main():
                                 raise RuntimeError("Invariant violated: no active chapter anchor")
                             cur.execute("""
                                 INSERT INTO answer_blocks (
-                                    question_id, block_order, block_type, content, reference, image_ref
-                                ) VALUES (?, ?, ?, ?, ?, ?)
-                            """, (target_q_id, block_order, "answer", trailing, None, None))
+                                    chapter_id, question_id, block_order, block_type, content, reference, image_ref
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """, (current_chapter, target_q_id, block_order, "answer", trailing, None, None))
                             stats["inserted"] += 1
                             stats["with_q_id"] += 1
                             block_order += 1
@@ -357,7 +357,7 @@ def main():
         if current_q_id is None and current_chapter > 0:
             cur.execute("""
                 SELECT id FROM questions
-                WHERE section_number=? AND chapter_number=? AND question_number=0
+                WHERE section_number=? AND chapter_id=? AND question_number=0
             """, (current_section, current_chapter))
             row = cur.fetchone()
             if not row:
@@ -370,7 +370,7 @@ def main():
         if target_q_id is None:
             cur.execute("""
                 SELECT id FROM questions
-                WHERE section_number=? AND chapter_number=? AND question_number=0
+                WHERE section_number=? AND chapter_id=? AND question_number=0
             """, (current_section, current_chapter))
             row = cur.fetchone()
             if not row:
@@ -379,9 +379,9 @@ def main():
 
         cur.execute("""
             INSERT INTO answer_blocks (
-                question_id, block_order, block_type, content, reference, image_ref
-            ) VALUES (?, ?, ?, ?, ?, ?)
-        """, (target_q_id, block_order, block_type, content, None, image_ref))
+                chapter_id, question_id, block_order, block_type, content, reference, image_ref
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (current_chapter, target_q_id, block_order, block_type, content, None, image_ref))
         
         stats["inserted"] += 1
         stats["with_q_id"] += 1
@@ -398,9 +398,9 @@ def main():
         raise RuntimeError("Post-import validation failed: NULL question_id found")
 
     cur.execute("""
-        SELECT COUNT(DISTINCT chapter_number)
+        SELECT COUNT(DISTINCT chapter_id)
         FROM questions
-        WHERE chapter_number > 0
+        WHERE chapter_id > 0
     """)
     chapter_count = cur.fetchone()[0]
 
@@ -408,7 +408,7 @@ def main():
     cur.execute("""
         SELECT COUNT(*)
         FROM questions
-        WHERE section_number = 0 AND chapter_number = 0 AND question_number = 0
+        WHERE section_number = 0 AND chapter_id = 0 AND question_number = 0
     """)
     global_intro_anchor_count = cur.fetchone()[0]
 
@@ -416,7 +416,7 @@ def main():
     cur.execute("""
         SELECT COUNT(*)
         FROM questions
-        WHERE section_number > 0 AND chapter_number = 0 AND question_number = 0
+        WHERE section_number > 0 AND chapter_id = 0 AND question_number = 0
     """)
     section_intro_anchor_count = cur.fetchone()[0]
 
@@ -436,7 +436,7 @@ def main():
         SELECT COUNT(*)
         FROM answer_blocks ab
         JOIN questions q ON ab.question_id = q.id
-        WHERE q.section_number = 0 AND q.chapter_number = 0 AND q.question_number = 0
+        WHERE q.section_number = 0 AND q.chapter_id = 0 AND q.question_number = 0
     """)
     print(f"Global introduction blocks (linked to section=0 intro): {cur.fetchone()[0]}")
 
