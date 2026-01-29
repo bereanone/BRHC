@@ -9,12 +9,14 @@ class ChapterBlocksView extends StatefulWidget {
   final int chapterId;
   final Map<int, GlobalKey>? questionKeys;
   final ScrollController? scrollController;
+  final ValueChanged<List<Map<String, Object?>>>? onBlocksLoaded;
 
   const ChapterBlocksView({
     super.key,
     required this.chapterId,
     this.questionKeys,
     this.scrollController,
+    this.onBlocksLoaded,
   });
 
   @override
@@ -74,6 +76,7 @@ class _ChapterBlocksViewState extends State<ChapterBlocksView> {
         }
 
         final blocks = snapshot.data ?? const <Map<String, Object?>>[];
+        widget.onBlocksLoaded?.call(blocks);
         if (blocks.isEmpty) {
           // Make the empty-state message accurate for both Introduction and normal chapters.
           return Center(
@@ -352,32 +355,35 @@ class _ChapterBlocksViewState extends State<ChapterBlocksView> {
                 )?.copyWith(height: 1.5);
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Expanded(child: Text(left, style: style)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: CustomPaint(
-                            painter: _DotLeaderPainter(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurface
-                                  .withOpacity(0.35),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(child: Text(left, style: style)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: CustomPaint(
+                              painter: _DotLeaderPainter(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withOpacity(0.35),
+                              ),
+                              child: const SizedBox.expand(),
                             ),
-                            child: const SizedBox.expand(),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            right,
-                            style: style,
-                            textAlign: TextAlign.right,
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              right,
+                              style: style,
+                              textAlign: TextAlign.right,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 );
@@ -503,6 +509,23 @@ _DotLeaderSplit? _parseDotLeaderRow(String content) {
       return _DotLeaderSplit(left, right);
     }
   }
+
+  if (content.contains('\t')) {
+    final parts = content
+        .split(RegExp(r'\t+'))
+        .map(_inlineHtmlToPlainText)
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (parts.length >= 2) {
+      final left = parts.first;
+      final right = parts.sublist(1).join(' ');
+      if (left.isNotEmpty && right.isNotEmpty) {
+        return _DotLeaderSplit(left, right);
+      }
+    }
+  }
+
   final plain = _inlineHtmlToPlainText(content).trim();
   if (plain.contains('\n')) return null;
   final match = RegExp(r'^(.+?)\.\s+([1-3]?\s*[A-Za-z].*\d.*)$')
@@ -511,6 +534,9 @@ _DotLeaderSplit? _parseDotLeaderRow(String content) {
   final left = match.group(1)!.trim();
   final right = match.group(2)!.trim();
   if (left.isEmpty || right.isEmpty) {
+    return null;
+  }
+  if (left.length > 60 || right.length > 40) {
     return null;
   }
   return _DotLeaderSplit(left, right);

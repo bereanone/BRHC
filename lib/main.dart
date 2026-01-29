@@ -41,12 +41,6 @@ class BrhcApp extends StatelessWidget {
       notifier: fontScaleController,
       child: MaterialApp(
         title: 'Bible Readings for the Home Circle',
-        onGenerateTitle: (context) {
-          final width = MediaQuery.sizeOf(context).width;
-          return width < 420
-              ? 'Bible Readings for the Home'
-              : 'Bible Readings for the Home Circle';
-        },
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           useMaterial3: false,

@@ -9,6 +9,7 @@ class QuestionNavBar extends StatelessWidget {
   final VoidCallback? onNextQuestion;
   final VoidCallback? onPrevChapter;
   final VoidCallback? onNextChapter;
+  final VoidCallback? onClipboard;
 
   const QuestionNavBar({
     super.key,
@@ -17,6 +18,7 @@ class QuestionNavBar extends StatelessWidget {
     required this.onNextQuestion,
     required this.onPrevChapter,
     required this.onNextChapter,
+    this.onClipboard,
   });
 
   @override
@@ -79,6 +81,19 @@ class QuestionNavBar extends StatelessWidget {
             style: buttonStyle,
             child: const Text('>>'),
           ),
+          if (onClipboard != null) ...[
+            const SizedBox(width: 6),
+            TextButton(
+              key: const ValueKey('nav-clipboard'),
+              onPressed: onClipboard,
+              style: buttonStyle.copyWith(
+                padding: MaterialStateProperty.all(
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                ),
+              ),
+              child: const Icon(Icons.content_copy, size: 16),
+            ),
+          ],
         ],
       ),
     );
@@ -104,7 +119,7 @@ class ChapterHeader extends StatelessWidget {
     final theme = Theme.of(context);
     final scale = _fontScale(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 2, 20, 2),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -122,7 +137,7 @@ class ChapterHeader extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 1),
+          const SizedBox(height: 2),
           GestureDetector(
             key: ValueKey('chapter-${chapterTitle}'),
             onTap: onChapterTap,

@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 
 import '../data/brhc_database.dart';
 import '../models/brhc_models.dart';
+import '../utils/font_scale.dart';
 import '../utils/title_formatter.dart';
 import 'chapters_screen.dart' as chapters;
 import 'sections_screen.dart';
 import '../widgets/fade_route.dart';
 import 'questions_header.dart';
 import 'package:brhc_app/widgets/chapter_blocks_view.dart';
+import '../utils/clipboard_exporter.dart';
+import 'launch_screen.dart';
 
 class QuestionsScreen extends StatefulWidget {
   final String sectionTitle;
@@ -36,6 +40,7 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
   final ScrollController _scrollController = ScrollController();
   final Map<int, GlobalKey> _questionContexts = {};
   List<_QuestionRow> _sortedQuestions = [];
+  List<Map<String, Object?>> _chapterBlocks = const [];
   int _currentQuestionIndex = 0;
   bool _navIndexInitialized = false;
   bool _didAutoScroll = false;
@@ -96,8 +101,22 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: FutureBuilder<_ChapterScreenData>(
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        elevation: 0,
+        backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
+        toolbarHeight: 16,
+        titleSpacing: 0,
+        centerTitle: false,
+        primary: false,
+        actions: const [],
+      ),
+      body: Stack(
+        children: [
+          SafeArea(
+            top: false,
+            minimum: const EdgeInsets.only(top: 0),
+            child: FutureBuilder<_ChapterScreenData>(
           future: _dataFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
@@ -137,6 +156,31 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
             if (!hasQuestions) {
               return Column(
                 children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        key: const ValueKey('nav-navigate'),
+                        onPressed: _showNavigateSheet,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor:
+                              Theme.of(context).colorScheme.primary,
+                          foregroundColor:
+                              Theme.of(context).colorScheme.onPrimary,
+                          textStyle: _scaleStyle(
+                            Theme.of(context).textTheme.labelLarge,
+                            _fontScale(context),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        child: const Text('Navigate'),
+                      ),
+                    ),
+                  ),
                   ChapterHeader(
                     sectionTitle: _displaySectionTitle(widget.sectionTitle),
                     chapterTitle: _buildChapterHeader(
@@ -156,26 +200,30 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                             sectionTitle: widget.sectionTitle,
                             displaySectionTitle: widget.displaySectionTitle,
                           ),
-                      ),
-                    );
-                  },
-                ),
-                QuestionNavBar(
-                  currentNumber: 0,
-                  onPrevQuestion: null,
-                  onNextQuestion: null,
-                  onPrevChapter: prevChapter == null
-                      ? null
-                      : () => _jumpToChapter(previous: true),
-                  onNextChapter: nextChapter == null
-                      ? null
-                      : () => _jumpToChapter(previous: false),
-                ),
-                Expanded(
-                  child: ChapterBlocksView(
-                    chapterId: chapterId,
-                    scrollController: _scrollController,
+                        ),
+                      );
+                    },
                   ),
+                  QuestionNavBar(
+                    currentNumber: 0,
+                    onPrevQuestion: null,
+                    onNextQuestion: null,
+                    onPrevChapter: prevChapter == null
+                        ? null
+                        : () => _jumpToChapter(previous: true),
+                    onNextChapter: nextChapter == null
+                        ? null
+                        : () => _jumpToChapter(previous: false),
+                    onClipboard: _showClipboardSheet,
+                  ),
+                  Expanded(
+                    child: ChapterBlocksView(
+                      chapterId: chapterId,
+                      scrollController: _scrollController,
+                      onBlocksLoaded: (blocks) {
+                        _chapterBlocks = blocks;
+                      },
+                    ),
                   ),
                 ],
               );
@@ -183,6 +231,31 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
 
             return Column(
               children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      key: const ValueKey('nav-navigate'),
+                      onPressed: _showNavigateSheet,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor:
+                            Theme.of(context).colorScheme.primary,
+                        foregroundColor:
+                            Theme.of(context).colorScheme.onPrimary,
+                        textStyle: _scaleStyle(
+                          Theme.of(context).textTheme.labelLarge,
+                          _fontScale(context),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: const Text('Navigate'),
+                    ),
+                  ),
+                ),
                 ChapterHeader(
                   sectionTitle: _displaySectionTitle(widget.sectionTitle),
                   chapterTitle: _buildChapterHeader(
@@ -203,9 +276,9 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                           displaySectionTitle: widget.displaySectionTitle,
                         ),
                       ),
-                    );
-                  },
-                ),
+                      );
+                    },
+                  ),
                 QuestionNavBar(
                   currentNumber: currentQuestionNumber,
                   onPrevQuestion:
@@ -224,18 +297,25 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                   onNextChapter: nextChapter == null
                       ? null
                       : () => _jumpToChapter(previous: false),
+                  onClipboard: _showClipboardSheet,
                 ),
                 Expanded(
                   child: ChapterBlocksView(
                     chapterId: chapterId,
                     questionKeys: _questionContexts,
                     scrollController: _scrollController,
+                    onBlocksLoaded: (blocks) {
+                      _chapterBlocks = blocks;
+                    },
                   ),
                 ),
               ],
             );
           },
         ),
+          ),
+          // Clipboard floating button removed as per refactor instructions.
+        ],
       ),
     );
   }
@@ -281,6 +361,225 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
     });
   }
 
+  void _showClipboardSheet() {
+    final hasQuestions = _sortedQuestions.isNotEmpty;
+    final currentQuestionId =
+        hasQuestions ? _sortedQuestions[_currentQuestionIndex].id : null;
+    final questionBlocks = currentQuestionId == null
+        ? const <Map<String, Object?>>[]
+        : _chapterBlocks
+            .where((b) => b['question_id'] == currentQuestionId)
+            .toList();
+    final chapterTitle = _buildChapterHeader(widget.rawChapterTitle);
+
+    ClipboardScope scope = ClipboardScope.chapter;
+    final hasQuestionBlocks = questionBlocks.isNotEmpty;
+
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Copy'),
+                  RadioListTile<ClipboardScope>(
+                    value: ClipboardScope.chapter,
+                    groupValue: scope,
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => scope = value);
+                    },
+                    title: const Text('Copy entire chapter'),
+                  ),
+                  RadioListTile<ClipboardScope>(
+                    value: ClipboardScope.currentQuestion,
+                    groupValue: scope,
+                    onChanged: hasQuestions
+                        ? (value) {
+                            if (value == null) return;
+                            setState(() => scope = value);
+                          }
+                        : null,
+                    title: const Text('Copy current question + answer'),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Spacer(),
+                      ElevatedButton(
+                        onPressed: () async {
+                          final export = buildClipboardExport(
+                            chapterTitle: chapterTitle,
+                            sectionTitle:
+                                _displaySectionTitle(widget.sectionTitle),
+                            blocks: _chapterBlocks,
+                            scope: scope,
+                            questionId: currentQuestionId,
+                          );
+                          await Clipboard.setData(
+                            ClipboardData(text: export.text),
+                          );
+                          if (mounted) {
+                            Navigator.of(context).pop();
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              const SnackBar(content: Text('Copied')),
+                            );
+                          }
+                        },
+                        child: const Text('Copy'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showNavigateSheet() {
+    final navContext = context;
+    showModalBottomSheet<void>(
+      context: navContext,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        final theme = Theme.of(sheetContext);
+        final maxHeight = MediaQuery.of(sheetContext).size.height * 0.85;
+        final scale = _fontScale(sheetContext);
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxHeight),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        if (!mounted) return;
+                        Navigator.of(sheetContext).pop();
+                        Future.microtask(() {
+                          if (!mounted) return;
+                          Navigator.of(navContext).pushAndRemoveUntil(
+                            FadePageRoute<void>(page: const LaunchScreen()),
+                            (route) => false,
+                          );
+                        });
+                      },
+                      child: Text(
+                        'Home',
+                        style: _scaleStyle(theme.textTheme.labelLarge, scale),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        if (!mounted) return;
+                        Navigator.of(sheetContext).pop();
+                        Future.microtask(() {
+                          if (!mounted) return;
+                          Navigator.of(navContext).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const SectionsScreen(),
+                            ),
+                          );
+                        });
+                      },
+                      child: Text(
+                        'Sections',
+                        style: _scaleStyle(theme.textTheme.labelLarge, scale),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        if (!mounted) return;
+                        Navigator.of(sheetContext).pop();
+                        Future.microtask(() {
+                          if (!mounted) return;
+                          Navigator.of(navContext).push(
+                            FadeRoute(
+                              builder: (_) => ChaptersScreen(
+                                sectionTitle: widget.sectionTitle,
+                                displaySectionTitle: widget.displaySectionTitle,
+                              ),
+                            ),
+                          );
+                        });
+                      },
+                      child: Text(
+                        'Chapters',
+                        style: _scaleStyle(theme.textTheme.labelLarge, scale),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Divider(color: theme.dividerColor),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Shortcuts:',
+                      style: _scaleStyle(theme.textTheme.titleSmall, scale)
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  _ShortcutLine(
+                    label: '<<',
+                    text: 'Previous chapter (within the current section)',
+                  ),
+                  _ShortcutLine(
+                    label: '<',
+                    text: 'Previous question in this chapter',
+                  ),
+                  _ShortcutLine(
+                    label: 'X',
+                    text: 'Current question number',
+                  ),
+                  _ShortcutLine(
+                    label: '>',
+                    text: 'Next question in this chapter',
+                  ),
+                  _ShortcutLine(
+                    label: '>>',
+                    text: 'Next chapter (within the current section)',
+                  ),
+                  _ShortcutLine(
+                    label: 'Copy',
+                    text: 'Copies the current question and its answer',
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Font size can be adjusted from the Home screen using the gear icon in the bottom-right corner.',
+                    style: _scaleStyle(theme.textTheme.bodySmall, scale)?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.75),
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   String _buildChapterHeader(String rawTitle) {
     final parsed = TitleFormatter.parseChapterTitle(rawTitle);
     if (parsed.number == null || parsed.number!.isEmpty) {
@@ -296,8 +595,6 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
     }
     return '${parsed.number}. ${parsed.title}';
   }
-
-
 
   void _jumpToQuestion({required bool previous}) {
     if (_sortedQuestions.isEmpty) {
@@ -413,6 +710,42 @@ class ChaptersScreen extends StatelessWidget {
   }
 }
 
+class _ShortcutLine extends StatelessWidget {
+  final String label;
+  final String text;
+
+  const _ShortcutLine({required this.label, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scale = _fontScale(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 90,
+            child: Text(
+              label,
+              style: _scaleStyle(theme.textTheme.bodyMedium, scale)?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              text,
+              style: _scaleStyle(theme.textTheme.bodyMedium, scale),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ChapterNavRow extends StatelessWidget {
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
@@ -449,4 +782,14 @@ class _ChapterNavRow extends StatelessWidget {
       ),
     );
   }
+}
+
+double _fontScale(BuildContext context) {
+  return FontScaleScope.maybeOf(context)?.scale ?? 1.0;
+}
+
+TextStyle? _scaleStyle(TextStyle? style, double scale) {
+  final fontSize = style?.fontSize;
+  if (fontSize == null) return style;
+  return style!.copyWith(fontSize: fontSize * scale);
 }
