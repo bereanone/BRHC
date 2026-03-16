@@ -89,6 +89,19 @@ class HowToUseScreen extends StatelessWidget {
             'Use the back arrow to move up one level at a time. From the Sections screen, the back arrow returns you to the entry screen.',
             style: _scaleStyle(theme.textTheme.bodyMedium, scale)?.copyWith(height: 1.5),
           ),
+          const SizedBox(height: 16),
+          Text(
+            'Supporting the App',
+            style: _scaleStyle(theme.textTheme.titleSmall, scale)?.copyWith(
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Bible Readings for the Home is intended to remain free. If God has blessed you and you want to support this work, your gift helps make wider translation possible and helps carry the gospel to more lost souls through the app store.',
+            style: _scaleStyle(theme.textTheme.bodyMedium, scale)?.copyWith(height: 1.5),
+          ),
         ],
       ),
     );

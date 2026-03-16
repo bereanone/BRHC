@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+
+import '../support/donation_screen.dart';
 import '../utils/font_scale.dart';
+import '../widgets/fade_route.dart';
 
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
@@ -71,6 +74,36 @@ class AboutScreen extends StatelessWidget {
                   .copyWith(
                     fontSize: theme.textTheme.bodyMedium!.fontSize! * scale,
                   ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'This app is free and supported by donations.',
+              style: theme.textTheme.titleSmall
+                  ?.copyWith(fontWeight: FontWeight.w600, height: 1.4)
+                  .copyWith(
+                    fontSize: theme.textTheme.titleSmall!.fontSize! * scale,
+                  ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Bible Readings for the Home is intended to remain free. If God has blessed you and you want to support this work, your gift helps make wider translation possible and helps carry the gospel to more lost souls through the app store.',
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(height: 1.5)
+                  .copyWith(
+                    fontSize: theme.textTheme.bodyMedium!.fontSize! * scale,
+                  ),
+            ),
+            const SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    FadePageRoute<void>(page: const DonationScreen()),
+                  );
+                },
+                child: const Text('Support This App'),
+              ),
             ),
           ],
         ),

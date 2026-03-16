@@ -5,6 +5,7 @@ import '../models/brhc_models.dart';
 import '../utils/font_scale.dart';
 import '../utils/title_formatter.dart';
 import '../widgets/fade_route.dart';
+import '../support/donation_screen.dart';
 import 'about_screen.dart';
 import 'chapters_screen.dart';
 import 'introduction_screen.dart';
@@ -18,9 +19,6 @@ class SectionsScreen extends StatefulWidget {
 }
 
 class _SectionsScreenState extends State<SectionsScreen> {
-  int _currentSectionIndex = 0;
-  List<Section>? _sections;
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -40,6 +38,20 @@ class _SectionsScreenState extends State<SectionsScreen> {
         ),
         title: const Text('Sections'),
         actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).push(
+                FadePageRoute<void>(page: const DonationScreen()),
+              );
+            },
+            child: Text(
+              'Support',
+              style: _scaleStyle(theme.textTheme.titleSmall, scale)?.copyWith(
+                color: theme.colorScheme.onSurface,
+                letterSpacing: 0.6,
+              ),
+            ),
+          ),
           TextButton(
             onPressed: () {
               Navigator.of(context).push(
@@ -63,7 +75,6 @@ class _SectionsScreenState extends State<SectionsScreen> {
             return const Center(child: CircularProgressIndicator());
           }
           final sections = snapshot.data ?? [];
-          _sections = sections;
           if (sections.isEmpty) {
             return const Center(
               child: Text(
@@ -85,9 +96,6 @@ class _SectionsScreenState extends State<SectionsScreen> {
               _SectionButton(
                 title: _displaySectionTitle(sections[i], i + 1),
                 onTap: () {
-                  setState(() {
-                    _currentSectionIndex = i;
-                  });
                   Navigator.of(context).push(
                     FadePageRoute<void>(
                       page: ChaptersScreen(
@@ -107,19 +115,6 @@ class _SectionsScreenState extends State<SectionsScreen> {
             itemBuilder: (context, index) => listItems[index],
           );
         },
-      ),
-    );
-  }
-
-  void _navigateToSection(int sectionIndex) {
-    if (_sections == null || sectionIndex < 0 || sectionIndex >= _sections!.length) return;
-    final section = _sections![sectionIndex];
-    Navigator.of(context).push(
-      FadePageRoute<void>(
-        page: ChaptersScreen(
-          sectionTitle: section.rawTitle,
-          sectionIndex: sectionIndex,
-        ),
       ),
     );
   }
@@ -149,7 +144,9 @@ class _SectionButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          border: Border.all(color: theme.colorScheme.primary.withOpacity(0.6)),
+          border: Border.all(
+            color: theme.colorScheme.primary.withValues(alpha: 0.6),
+          ),
           borderRadius: BorderRadius.circular(6),
           color: theme.colorScheme.surface,
         ),

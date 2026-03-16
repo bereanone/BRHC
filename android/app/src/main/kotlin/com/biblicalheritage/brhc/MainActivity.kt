@@ -1,4 +1,4 @@
-package com.example.brhc_app
+package com.biblicalheritage.brhc
 
 import io.flutter.embedding.android.FlutterActivity
 

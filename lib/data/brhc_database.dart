@@ -119,6 +119,35 @@ class BrhcDatabase {
     }
   }
 
+  Future<String?> getSetting(String key) async {
+    try {
+      final db = await userDatabase;
+      final rows = await db.rawQuery(
+        'SELECT value FROM user_settings WHERE "key" = ? LIMIT 1',
+        [key],
+      );
+      if (rows.isEmpty) {
+        return null;
+      }
+      return rows.first['value']?.toString();
+    } catch (error) {
+      debugPrint('Setting read failed for $key: $error');
+      return null;
+    }
+  }
+
+  Future<void> setSetting(String key, String value) async {
+    try {
+      final db = await userDatabase;
+      await db.rawInsert(
+        'INSERT OR REPLACE INTO user_settings ("key", value) VALUES (?, ?)',
+        [key, value],
+      );
+    } catch (error) {
+      debugPrint('Setting write failed for $key: $error');
+    }
+  }
+
   Future<Database> _openSeedDb() async {
     await userDatabase;
 

@@ -1,0 +1,5 @@
+#!/bin/zsh
+
+flutter clean
+flutter pub get
+flutter run -d macos

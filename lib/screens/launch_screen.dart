@@ -1,12 +1,81 @@
 import 'package:flutter/material.dart';
 
+import '../support/donation_screen.dart';
+import '../support/donation_service.dart';
 import '../widgets/fade_route.dart';
 import 'font_settings_screen.dart';
 import 'how_to_use_screen.dart';
 import 'sections_screen.dart';
 
-class LaunchScreen extends StatelessWidget {
+class LaunchScreen extends StatefulWidget {
   const LaunchScreen({super.key});
+
+  @override
+  State<LaunchScreen> createState() => _LaunchScreenState();
+}
+
+class _LaunchScreenState extends State<LaunchScreen> {
+  @override
+  void initState() {
+    super.initState();
+    DonationService.instance.ensureStarted();
+    DonationService.instance.recordLaunch();
+  }
+
+  Future<void> _openSupportScreen() async {
+    await Navigator.of(context).push(
+      FadePageRoute<void>(page: const DonationScreen()),
+    );
+  }
+
+  Future<void> _handleEnter() async {
+    final shouldPrompt = await DonationService.instance.shouldPrompt();
+    if (!mounted) return;
+
+    if (shouldPrompt) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Support Biblical Heritage?'),
+          content: const Text(
+            'Bible Readings for the Home is intended to remain free. If God has blessed you and you want to support this work, your gift helps make wider translation possible and helps carry the gospel to more lost souls through the app store.',
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop('support'),
+              child: const Text('Support'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop('enter'),
+              child: const Text('Enter now'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop('dismiss'),
+              child: const Text('Don’t remind me'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted || choice == null) return;
+
+      if (choice == 'support') {
+        await DonationService.instance.markNotNow();
+        if (!mounted) return;
+        await _openSupportScreen();
+        if (!mounted) return;
+      } else if (choice == 'dismiss') {
+        await DonationService.instance.disableReminders();
+      } else {
+        await DonationService.instance.markNotNow();
+      }
+    }
+
+    if (!mounted) return;
+    Navigator.of(context).push(
+      FadePageRoute<void>(page: const SectionsScreen()),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,11 +131,7 @@ class LaunchScreen extends StatelessWidget {
                     width: 220,
                     height: 56,
                     child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          FadePageRoute<void>(page: const SectionsScreen()),
-                        );
-                      },
+                      onPressed: _handleEnter,
                       child: const Text(
                         'ENTER',
                         style: TextStyle(
@@ -77,6 +142,17 @@ class LaunchScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 24),
+                  Text(
+                    'This app is free and supported by donations.',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: _openSupportScreen,
+                    child: const Text('Support This App'),
+                  ),
+                  const SizedBox(height: 12),
                   Expanded(
                     child: Center(
                       child: Image.asset(
