@@ -1,6 +1,7 @@
 .DS_Store
 *.log
 *.tmp
+
 __pycache__/
 .dart_tool/
 .flutter-plugins
@@ -8,13 +9,7 @@ __pycache__/
 .packages
 .pub-cache/
 build/
-brhc.db-journal
-*.db-wal
-*.db-shm
-*.db-journal
-*.db-wal
-*.db-shm
-*.db-journal
+
 # --- SQLite runtime files ---
 *.db-wal
 *.db-shm
@@ -29,5 +24,8 @@ audit*.json
 
 # --- Editor / temp files ---
 ~$*
- *.db-wal
-*.db-shmbrhc.db
+.tmp_iconset.*/
+tmp_image_blob.bin
+tmp_last_image.bin
+tmp_images/
+ios/AppStoreIAP/
