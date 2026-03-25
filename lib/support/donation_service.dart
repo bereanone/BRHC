@@ -1,19 +1,45 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 
 import '../data/brhc_database.dart';
 
 enum DonationTier {
-  support299('biblical_heritage_support_299', '\$2.99'),
-  support999('biblical_heritage_support_999', '\$9.99'),
-  support2499('biblical_heritage_support_2499', '\$24.99');
+  support299(
+    androidProductId: 'biblical_heritage_support_299',
+    appleProductId: 'brhc_support_299',
+    fallbackLabel: '\$2.99',
+  ),
+  support999(
+    androidProductId: 'biblical_heritage_support_999',
+    appleProductId: 'brhc_support_999',
+    fallbackLabel: '\$9.99',
+  ),
+  support2499(
+    androidProductId: 'biblical_heritage_support_2499',
+    appleProductId: 'brhc_support_2499',
+    fallbackLabel: '\$24.99',
+  );
 
-  const DonationTier(this.productId, this.fallbackLabel);
+  const DonationTier({
+    required this.androidProductId,
+    required this.appleProductId,
+    required this.fallbackLabel,
+  });
 
-  final String productId;
+  final String androidProductId;
+  final String appleProductId;
   final String fallbackLabel;
+
+  String get productId {
+    if (!kIsWeb && (Platform.isIOS || Platform.isMacOS)) {
+      return appleProductId;
+    }
+    return androidProductId;
+  }
 }
 
 class DonationCatalogItem {
@@ -75,10 +101,43 @@ class DonationService {
   final InAppPurchase _iap = InAppPurchase.instance;
   StreamSubscription<List<PurchaseDetails>>? _purchaseSub;
   bool _started = false;
+  Timer? _purchaseTimeout;
+  DateTime? _lastPurchaseStartedAt;
+  bool _sawPendingPurchaseUpdate = false;
 
   final ValueNotifier<bool> donated = ValueNotifier<bool>(false);
   final ValueNotifier<bool> purchaseInFlight = ValueNotifier<bool>(false);
   final ValueNotifier<String?> purchaseStatus = ValueNotifier<String?>(null);
+
+  String get _storeName {
+    if (!kIsWeb && (Platform.isIOS || Platform.isMacOS)) {
+      return 'Apple';
+    }
+    return 'the store';
+  }
+
+  String _friendlyPurchaseError(Object error) {
+    final raw = error.toString();
+    final lower = raw.toLowerCase();
+    if (lower.contains('authentication failed') ||
+        lower.contains('check the account information you entered') ||
+        lower.contains('password reuse not available for account')) {
+      return '$_storeName could not verify the account for this purchase. Please check the account details and try again.';
+    }
+    if (lower.contains('usercancelled') || lower.contains('cancelled')) {
+      return 'Support purchase cancelled. No donation was made.';
+    }
+    return 'Support purchase failed. Please try again.';
+  }
+
+  void _logPurchaseError(String context, Object error) {
+    debugPrint('BRHC purchase error [$context]: $error');
+    if (error is PlatformException) {
+      debugPrint(
+        'BRHC purchase error [$context] code=${error.code} message=${error.message} details=${error.details}',
+      );
+    }
+  }
 
   Future<void> ensureStarted() async {
     if (_started) return;
@@ -88,12 +147,14 @@ class DonationService {
       _handlePurchaseUpdates,
       onError: (Object error, StackTrace stackTrace) {
         purchaseInFlight.value = false;
-        purchaseStatus.value = 'Support purchase failed: $error';
+        purchaseStatus.value = _friendlyPurchaseError(error);
       },
     );
   }
 
   Future<void> dispose() async {
+    _purchaseTimeout?.cancel();
+    _purchaseTimeout = null;
     await _purchaseSub?.cancel();
     _purchaseSub = null;
     _started = false;
@@ -178,39 +239,100 @@ class DonationService {
           'This support option is not configured in the store yet.';
       return false;
     }
+    _purchaseTimeout?.cancel();
     purchaseInFlight.value = true;
-    purchaseStatus.value = 'Starting support purchase...';
+    _lastPurchaseStartedAt = DateTime.now();
+    _sawPendingPurchaseUpdate = false;
+    purchaseStatus.value = 'Opening $_storeName purchase confirmation...';
     final purchaseParam = PurchaseParam(productDetails: item.product!);
-    return _iap.buyConsumable(purchaseParam: purchaseParam);
+    bool started;
+    try {
+      started = await _iap.buyConsumable(purchaseParam: purchaseParam);
+    } on PlatformException catch (error) {
+      _logPurchaseError('buyConsumable platform exception', error);
+      _purchaseTimeout?.cancel();
+      _purchaseTimeout = null;
+      purchaseInFlight.value = false;
+      purchaseStatus.value = _friendlyPurchaseError(error);
+      return false;
+    } catch (error) {
+      _logPurchaseError('buyConsumable exception', error);
+      _purchaseTimeout?.cancel();
+      _purchaseTimeout = null;
+      purchaseInFlight.value = false;
+      purchaseStatus.value = _friendlyPurchaseError(error);
+      return false;
+    }
+    if (!started) {
+      purchaseInFlight.value = false;
+      purchaseStatus.value =
+          'Could not start the support purchase. Please try again.';
+      return false;
+    }
+    purchaseStatus.value =
+        'Confirm the purchase in the $_storeName dialog. If nothing appears, try once more.';
+    _purchaseTimeout = Timer(const Duration(seconds: 8), () {
+      if (!purchaseInFlight.value) return;
+      purchaseInFlight.value = false;
+      purchaseStatus.value =
+          '$_storeName did not show the purchase sheet yet. Please wait a moment, then try one more tap if needed.';
+    });
+    return true;
   }
 
   Future<void> _markDonated() async {
     await BrhcDatabase.instance.setSetting(_donatedKey, '1');
     donated.value = true;
     purchaseStatus.value =
-        'Thank you for supporting Biblical Heritage through the app store.';
+        'Thank you for supporting Biblical Heritage. May God bless the giver.';
   }
 
   Future<void> _handlePurchaseUpdates(
     List<PurchaseDetails> purchaseDetailsList,
   ) async {
     for (final purchase in purchaseDetailsList) {
+      _purchaseTimeout?.cancel();
+      _purchaseTimeout = null;
       if (purchase.status == PurchaseStatus.pending) {
+        _sawPendingPurchaseUpdate = true;
         purchaseInFlight.value = true;
-        purchaseStatus.value = 'Waiting for the app store...';
+        purchaseStatus.value =
+            'Waiting for $_storeName to finish the support purchase...';
         continue;
       }
       if (purchase.status == PurchaseStatus.error) {
+        if (purchase.error != null) {
+          debugPrint(
+            'BRHC purchase stream error code=${purchase.error!.code} message=${purchase.error!.message} details=${purchase.error!.details}',
+          );
+        }
         purchaseInFlight.value = false;
-        purchaseStatus.value =
-            purchase.error?.message ?? 'Support purchase failed.';
+        purchaseStatus.value = purchase.error?.message != null
+            ? _friendlyPurchaseError(purchase.error!.message)
+            : 'Support purchase failed. Please try again.';
+        _lastPurchaseStartedAt = null;
+        _sawPendingPurchaseUpdate = false;
       } else if (purchase.status == PurchaseStatus.purchased ||
           purchase.status == PurchaseStatus.restored) {
         purchaseInFlight.value = false;
+        _lastPurchaseStartedAt = null;
+        _sawPendingPurchaseUpdate = false;
         await _markDonated();
       } else if (purchase.status == PurchaseStatus.canceled) {
         purchaseInFlight.value = false;
-        purchaseStatus.value = 'Support purchase cancelled.';
+        final startedAt = _lastPurchaseStartedAt;
+        final secondsSinceStart = startedAt == null
+            ? null
+            : DateTime.now().difference(startedAt).inSeconds;
+        final likelyAuthOrStoreIssue =
+            startedAt != null &&
+            !_sawPendingPurchaseUpdate &&
+            (secondsSinceStart == null || secondsSinceStart >= 2);
+        purchaseStatus.value = likelyAuthOrStoreIssue
+            ? '$_storeName did not complete the purchase. No donation was made. If you entered account details, please verify them and try again.'
+            : 'Support purchase cancelled. No donation was made.';
+        _lastPurchaseStartedAt = null;
+        _sawPendingPurchaseUpdate = false;
       }
       if (purchase.pendingCompletePurchase) {
         await _iap.completePurchase(purchase);

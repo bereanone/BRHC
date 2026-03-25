@@ -28,6 +28,7 @@ class _DonationScreenState extends State<DonationScreen> {
       _loading = true;
       _error = null;
     });
+    _service.purchaseStatus.value = null;
     try {
       final catalog = await _service.loadCatalog();
       if (!mounted) return;
@@ -71,106 +72,201 @@ class _DonationScreenState extends State<DonationScreen> {
         child: ValueListenableBuilder<bool>(
           valueListenable: _service.donated,
           builder: (context, donated, _) {
-            return ValueListenableBuilder<String?>(
-              valueListenable: _service.purchaseStatus,
-              builder: (context, status, __) {
-                return Column(
-                  children: [
-                    Expanded(
-                      child: ListView(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: scheme.surface,
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                color: scheme.outline.withValues(alpha: 0.35),
-                              ),
-                            ),
-                            child: Text(
-                              donated
-                                  ? 'Thank you for supporting Biblical Heritage. Future reminders are now turned off.'
-                                  : 'Biblical Heritage is intended to remain free. If God has blessed you and you want to support this work, your gift helps make wider translation possible and helps carry the gospel to more lost souls through the app store.',
-                              style: _scaleStyle(theme.textTheme.bodyMedium, scale)?.copyWith(
-                                height: 1.5,
-                              ),
-                            ),
-                          ),
-                          if (status != null && status.trim().isNotEmpty) ...[
-                            const SizedBox(height: 12),
-                            Text(
-                              status,
-                              style: _scaleStyle(theme.textTheme.bodySmall, scale)?.copyWith(
-                                color: scheme.onSurface,
-                              ),
-                            ),
-                          ],
-                          if (_error != null) ...[
-                            const SizedBox(height: 12),
-                            Text(
-                              _error!,
-                              style: _scaleStyle(theme.textTheme.bodySmall, scale)?.copyWith(
-                                color: scheme.error,
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 16),
-                          if (_loading)
-                            const Center(child: CircularProgressIndicator())
-                          else
-                            for (final item
-                                in _catalog?.items ?? const <DonationCatalogItem>[])
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: _DonationTile(
-                                  item: item,
-                                  scale: scale,
-                                  onPurchase: donated ? null : () => _purchase(item),
+            return ValueListenableBuilder<bool>(
+              valueListenable: _service.purchaseInFlight,
+              builder: (context, purchaseInFlight, __) {
+                return ValueListenableBuilder<String?>(
+                  valueListenable: _service.purchaseStatus,
+                  builder: (context, status, ___) {
+                    return Column(
+                      children: [
+                        Expanded(
+                          child: ListView(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: scheme.surface,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: scheme.outline.withValues(alpha: 0.35),
+                                  ),
+                                ),
+                                child: Text(
+                                  donated
+                                      ? 'Thank you for supporting Biblical Heritage. May God bless the giver.'
+                                      : 'Biblical Heritage is intended to remain free. If God has blessed you and you want to support this work, your gift helps make wider translation possible and helps carry the gospel to more lost souls through the app store.',
+                                  style: _scaleStyle(theme.textTheme.bodyMedium, scale)?.copyWith(
+                                    height: 1.5,
+                                  ),
                                 ),
                               ),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () async {
-                                final navigator = Navigator.of(context);
-                                await _service.markNotNow();
-                                if (!mounted) return;
-                                navigator.pop();
-                              },
-                              child: const Text('Not now'),
-                            ),
+                              if (!donated) ...[
+                                const SizedBox(height: 10),
+                                Text(
+                                  'Tap one support amount once. The store should respond within a few seconds.',
+                                  style: _scaleStyle(theme.textTheme.bodyMedium, scale)?.copyWith(
+                                    color: scheme.onSurface,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                              if (status != null && status.trim().isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                _PurchaseStatusBanner(
+                                  status: status,
+                                  inFlight: purchaseInFlight,
+                                  donated: donated,
+                                  scale: scale,
+                                ),
+                              ],
+                              if (_error != null) ...[
+                                const SizedBox(height: 12),
+                                Text(
+                                  _error!,
+                                  style: _scaleStyle(theme.textTheme.bodySmall, scale)?.copyWith(
+                                    color: scheme.error,
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 16),
+                              if (_loading)
+                                const Center(child: CircularProgressIndicator())
+                              else
+                                for (final item
+                                    in _catalog?.items ?? const <DonationCatalogItem>[])
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: _DonationTile(
+                                      item: item,
+                                      scale: scale,
+                                      onPurchase: donated || purchaseInFlight
+                                          ? null
+                                          : () => _purchase(item),
+                                    ),
+                                  ),
+                            ],
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: donated
-                                  ? null
-                                  : () async {
-                                      final navigator = Navigator.of(context);
-                                      await _service.disableReminders();
-                                      if (!mounted) return;
-                                      navigator.pop();
-                                    },
-                              child: Text(donated ? 'Supported' : 'Don’t remind me'),
-                            ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: purchaseInFlight
+                                      ? null
+                                      : () async {
+                                          final navigator = Navigator.of(context);
+                                          await _service.markNotNow();
+                                          if (!mounted) return;
+                                          navigator.pop();
+                                        },
+                                  child: const Text('Not now'),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: donated || purchaseInFlight
+                                      ? null
+                                      : () async {
+                                          final navigator = Navigator.of(context);
+                                          await _service.disableReminders();
+                                          if (!mounted) return;
+                                          navigator.pop();
+                                        },
+                                  child: Text(donated ? 'Supported' : 'Don’t remind me'),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
-                    ),
-                  ],
+                        ),
+                      ],
+                    );
+                  },
                 );
               },
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+class _PurchaseStatusBanner extends StatelessWidget {
+  const _PurchaseStatusBanner({
+    required this.status,
+    required this.inFlight,
+    required this.donated,
+    required this.scale,
+  });
+
+  final String status;
+  final bool inFlight;
+  final bool donated;
+  final double scale;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isSuccess = donated || status.toLowerCase().contains('thank you');
+    final isError = !inFlight && !isSuccess;
+    final background = isSuccess
+        ? scheme.primary.withValues(alpha: 0.15)
+        : isError
+            ? scheme.error.withValues(alpha: 0.12)
+            : scheme.surface;
+    final foreground = isSuccess
+        ? scheme.primary
+        : isError
+            ? scheme.error
+            : scheme.onSurface;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isSuccess
+              ? scheme.primary
+              : isError
+                  ? scheme.error
+                  : scheme.outline.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (inFlight)
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+            )
+          else
+            Icon(
+              isSuccess ? Icons.favorite : Icons.info_outline,
+              color: foreground,
+            ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              status,
+              style: _scaleStyle(theme.textTheme.bodyLarge, scale)?.copyWith(
+                color: foreground,
+                fontWeight: isSuccess ? FontWeight.w600 : FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

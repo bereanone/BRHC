@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "brhc_app" "\0"
+            VALUE "CompanyName", "Biblical Heritage" "\0"
+            VALUE "FileDescription", "Bible Readings 1914" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "brhc_app" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "brhc_app.exe" "\0"
-            VALUE "ProductName", "brhc_app" "\0"
+            VALUE "InternalName", "BibleReadings1914" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Biblical Heritage. All rights reserved." "\0"
+            VALUE "OriginalFilename", "BibleReadings1914.exe" "\0"
+            VALUE "ProductName", "Bible Readings 1914" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
